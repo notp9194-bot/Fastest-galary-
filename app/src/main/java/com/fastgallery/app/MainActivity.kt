@@ -19,6 +19,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -512,6 +513,7 @@ private fun GalleryContent(
                 } else if (viewerIndex < 0) {
                     Surface(
                         modifier = Modifier
+                            .navigationBarsPadding()
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         shape = RoundedCornerShape(26.dp),
@@ -527,6 +529,8 @@ private fun GalleryContent(
                             modifier = Modifier.clip(RoundedCornerShape(26.dp)),
                             containerColor = Color.Transparent,
                             tonalElevation = 0.dp,
+                            // System nav bar ka inset pill ke bahar (Surface pe) lagta hai, andar nahi; warna pill neeche tak lambi ho jaati thi.
+                            windowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
                         ) {
                             val destinations = listOf(
                                 stringResource(R.string.nav_photos),
