@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -386,7 +388,7 @@ fun PartialAccessBanner(onManage: () -> Unit, onDismiss: () -> Unit, modifier: M
             TextButton(onClick = onManage) { Text(stringResource(R.string.partial_access_manage)) }
             androidx.compose.material3.IconButton(onClick = onDismiss) {
                 androidx.compose.material3.Icon(
-                    androidx.compose.material.icons.Icons.Filled.Close,
+                    Icons.Filled.Close,
                     stringResource(R.string.partial_access_dismiss),
                 )
             }
