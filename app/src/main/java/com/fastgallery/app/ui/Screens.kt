@@ -3,15 +3,15 @@ package com.fastgallery.app.ui
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.ScrollableDefaults
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.FlingBehavior
+import androidx.compose.foundation.gestures.ScrollScope
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -36,12 +36,16 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
+import android.widget.OverScroller
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
@@ -67,11 +71,50 @@ import com.fastgallery.app.data.GridEntry
 import com.fastgallery.app.data.MediaItem
 
 @Composable
+private fun rememberGridFlingBehavior(friction: Float): FlingBehavior {
+    val context = LocalContext.current
+    return remember(context, friction) {
+        object : FlingBehavior {
+            override suspend fun ScrollScope.performFling(initialVelocity: Float): Float {
+                if (!initialVelocity.isFinite() || abs(initialVelocity) < 1f) return 0f
+                val scroller = OverScroller(context).apply { setFriction(friction) }
+                scroller.fling(
+                    0,
+                    0,
+                    0,
+                    initialVelocity.roundToInt(),
+                    0,
+                    0,
+                    -1_000_000_000,
+                    1_000_000_000,
+                )
+                var lastY = 0
+                while (!scroller.isFinished) {
+                    withFrameNanos { scroller.computeScrollOffset() }
+                    val currentY = scroller.currY
+                    val delta = (currentY - lastY).toFloat()
+                    if (delta != 0f) {
+                        val consumed = scrollBy(delta)
+                        lastY = currentY
+                        if (abs(delta - consumed) > 1f) {
+                            scroller.forceFinished(true)
+                            return 0f
+                        }
+                    }
+                }
+                return 0f
+            }
+        }
+    }
+}
+
+@Composable
 fun MediaGrid(
     items: List<MediaItem>,
     padding: PaddingValues,
     selected: Set<String>,
     columns: Int,
+    flingFriction: Float = 0.015f,
     itemsVersion: Long,
     onOpen: (Int) -> Unit,
     onToggleSelection: (MediaItem) -> Unit,
@@ -83,7 +126,7 @@ fun MediaGrid(
     val scope = rememberCoroutineScope()
     val currentColumns by rememberUpdatedState(columns)
     val changeColumns by rememberUpdatedState(onPinchColumns)
-    val gridFlingBehavior = ScrollableDefaults.flingBehavior()
+    val gridFlingBehavior = rememberGridFlingBehavior(flingFriction)
     LaunchedEffect(gridState, items.size) {
         snapshotFlow {
             gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
