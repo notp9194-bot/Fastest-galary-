@@ -50,7 +50,6 @@ import com.fastgallery.app.data.GallerySort
 import com.fastgallery.app.data.MediaFilter
 import com.fastgallery.app.data.MediaItem
 import com.fastgallery.app.data.MediaOperations
-import com.fastgallery.app.data.matchesFilter
 import com.fastgallery.app.ui.AlbumsGrid
 import com.fastgallery.app.ui.CenterMessage
 import com.fastgallery.app.ui.GalleryTheme
@@ -114,6 +113,7 @@ private fun GalleryContent(
 ) {
     val ctx = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
+    val currentList by vm.displayItems.collectAsStateWithLifecycle(initialValue = emptyList())
     val scope = rememberCoroutineScope()
     var granted by remember { mutableStateOf(hasMediaAccess(ctx)) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -129,7 +129,7 @@ private fun GalleryContent(
     }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         granted = hasMediaAccess(ctx)
-        if (granted) vm.load()
+        if (granted) vm.refreshIfNeeded()
     }
 
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -143,6 +143,24 @@ private fun GalleryContent(
     var columns by rememberSaveable { mutableIntStateOf(GalleryPreferences.columns(ctx)) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var approvalAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val needsCompleteLibrary = tab != 0 ||
+        albumId != null ||
+        search.isNotBlank() ||
+        sort != GallerySort.DATE_NEWEST ||
+        filter != MediaFilter.ALL
+
+    LaunchedEffect(tab, albumId, search, sort, filter, state.itemsVersion) {
+        vm.setQuery(
+            GalleryQuery(
+                tab = tab,
+                albumId = albumId,
+                search = search,
+                sort = sort,
+                filter = filter,
+            ),
+        )
+        if (needsCompleteLibrary) vm.loadAll()
+    }
 
     val approvalLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         val action = approvalAction
@@ -197,28 +215,6 @@ private fun GalleryContent(
         Toast.makeText(ctx, if (value) "Moved to Fast Gallery Trash" else "Restored", Toast.LENGTH_SHORT).show()
     }
 
-    val hiddenAlbumIds = state.hiddenAlbumIds
-    val visibleItems = state.items.filter { it.bucketId.toString() !in hiddenAlbumIds && it.key !in state.trashKeys }
-    val albumItems = remember(state.items, albumId, state.trashKeys) {
-        albumId?.let { id -> state.items.filter { it.bucketId == id && it.key !in state.trashKeys } } ?: emptyList()
-    }
-    val baseItems = when {
-        tab == 3 -> state.items.filter { it.key in state.trashKeys }
-        tab == 2 -> visibleItems.filter { it.key in state.favoriteKeys }
-        albumId != null -> albumItems
-        else -> visibleItems
-    }
-    val currentList = remember(baseItems, search, sort, filter) {
-        val filtered = baseItems
-            .filter { it.matchesFilter(filter) }
-            .filter { search.isBlank() || it.name.contains(search, true) || it.bucketName.contains(search, true) }
-        when (sort) {
-            GallerySort.DATE_NEWEST -> filtered.sortedByDescending { it.dateTaken.takeIf { date -> date > 0 } ?: it.dateAdded * 1000L }
-            GallerySort.DATE_OLDEST -> filtered.sortedBy { it.dateTaken.takeIf { date -> date > 0 } ?: it.dateAdded * 1000L }
-            GallerySort.NAME -> filtered.sortedBy { it.name.lowercase() }
-            GallerySort.SIZE_LARGEST -> filtered.sortedByDescending { it.sizeBytes }
-        }
-    }
     val inAlbum = tab == 1 && albumId != null
     val title = when {
         tab == 4 -> "Settings"
@@ -307,6 +303,10 @@ private fun GalleryContent(
                 state.loading -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
+                needsCompleteLibrary && state.hasMore && tab != 4 ->
+                    Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
                 tab == 4 -> SettingsScreen(
                     padding = padding,
                     theme = theme,
@@ -353,6 +353,7 @@ private fun GalleryContent(
                     padding = padding,
                     selected = selected,
                     columns = columns,
+                    itemsVersion = state.itemsVersion,
                     onOpen = { viewerIndex = it },
                     onToggleSelection = { item ->
                         selected = if (item.key in selected) selected - item.key else selected + item.key
@@ -361,6 +362,7 @@ private fun GalleryContent(
                         columns = next.coerceIn(2, 8)
                         GalleryPreferences.setColumns(ctx, columns)
                     },
+                    onLoadMore = vm::loadNextPage,
                 )
             }
         }
@@ -370,6 +372,7 @@ private fun GalleryContent(
                 startIndex = viewerIndex,
                 favoriteKeys = state.favoriteKeys,
                 trashedKeys = state.trashKeys,
+                onLoadMore = vm::loadNextPage,
                 onClose = { viewerIndex = -1 },
                 onFavorite = { GalleryPreferences.toggleFavorite(ctx, it); vm.refreshPreferences() },
                 onSetTrashed = ::setTrashed,

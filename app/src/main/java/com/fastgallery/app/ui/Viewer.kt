@@ -43,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,6 +79,7 @@ fun Viewer(
     startIndex: Int,
     favoriteKeys: Set<String>,
     trashedKeys: Set<String>,
+    onLoadMore: () -> Unit,
     onClose: () -> Unit,
     onFavorite: (MediaItem) -> Unit,
     onSetTrashed: (MediaItem, Boolean) -> Unit,
@@ -89,6 +91,7 @@ fun Viewer(
 ) {
     val ctx = LocalContext.current
     val pager = rememberPagerState(initialPage = startIndex.coerceIn(0, items.lastIndex)) { items.size }
+    val loadMore by rememberUpdatedState(onLoadMore)
     var chrome by remember { mutableStateOf(true) }
     var slideshow by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf<MediaItem?>(null) }
@@ -112,17 +115,21 @@ fun Viewer(
             pager.animateScrollToPage((pager.currentPage + 1) % items.size)
         }
     }
+    LaunchedEffect(pager.currentPage, items.size) {
+        if (items.isNotEmpty() && pager.currentPage >= items.size - 3) loadMore()
+    }
 
     val current = items.getOrNull(pager.currentPage)
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         HorizontalPager(
             state = pager,
             modifier = Modifier.fillMaxSize(),
-            beyondViewportPageCount = 1,
+            beyondViewportPageCount = 0,
             key = { items[it].key },
         ) { page ->
             ViewerPage(
                 item = items[page],
+                isCurrent = page == pager.currentPage,
                 onTap = { chrome = !chrome },
                 onDismiss = onClose,
             )
@@ -282,11 +289,21 @@ private fun EditDialog(name: String, onDismiss: () -> Unit, onSave: (ImageEdit) 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ViewerPage(item: MediaItem, onTap: () -> Unit, onDismiss: () -> Unit) {
+private fun ViewerPage(
+    item: MediaItem,
+    isCurrent: Boolean,
+    onTap: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     var scale by remember(item.key) { mutableFloatStateOf(1f) }
     var offset by remember(item.key) { mutableStateOf(Offset.Zero) }
     var box by remember(item.key) { mutableStateOf(IntSize.Zero) }
     var dismissOffset by remember(item.key) { mutableFloatStateOf(0f) }
+    val decodeSize = if (isCurrent) {
+        (maxOf(box.width, box.height) * 1.5f).toInt().coerceIn(512, 2560)
+    } else {
+        512
+    }
     val closeThreshold = with(LocalDensity.current) { 120.dp.toPx() }
     val transformState = rememberTransformableState { zoom, pan, _ ->
         scale = (scale * zoom).coerceIn(1f, 6f)
@@ -332,7 +349,7 @@ private fun ViewerPage(item: MediaItem, onTap: () -> Unit, onDismiss: () -> Unit
             VideoPlayer(item)
         } else {
             AsyncImage(
-                model = rememberImageRequest(item.uri, 4096),
+                model = rememberImageRequest(item.uri, decodeSize),
                 contentDescription = item.name,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize().graphicsLayer {

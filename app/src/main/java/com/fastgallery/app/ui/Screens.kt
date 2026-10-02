@@ -3,7 +3,6 @@ package com.fastgallery.app.ui
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.ScrollableDefaults
@@ -12,6 +11,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -34,8 +34,12 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlin.math.hypot
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -67,17 +72,26 @@ fun MediaGrid(
     padding: PaddingValues,
     selected: Set<String>,
     columns: Int,
+    itemsVersion: Long,
     onOpen: (Int) -> Unit,
     onToggleSelection: (MediaItem) -> Unit,
     onPinchColumns: (Int) -> Unit,
+    onLoadMore: () -> Unit,
 ) {
-    val entries = remember(items) { com.fastgallery.app.data.buildEntries(items) }
+    val entries = remember(itemsVersion) { com.fastgallery.app.data.buildEntries(items) }
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     val currentColumns by rememberUpdatedState(columns)
     val changeColumns by rememberUpdatedState(onPinchColumns)
-    val gridDecay = remember { exponentialDecay<Float>(frictionMultiplier = 0.007f) }
-    val gridFlingBehavior = ScrollableDefaults.flingBehavior(decayAnimationSpec = gridDecay)
+    val gridFlingBehavior = ScrollableDefaults.flingBehavior()
+    LaunchedEffect(gridState, items.size) {
+        snapshotFlow {
+            gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        }.distinctUntilChanged().collect { lastVisible ->
+            val total = gridState.layoutInfo.totalItemsCount
+            if (lastVisible >= 0 && lastVisible >= total - 18) onLoadMore()
+        }
+    }
     Box(Modifier.fillMaxSize()) {
         LazyVerticalGrid(
             columns = if (columns == 0) GridCells.Adaptive(112.dp) else GridCells.Fixed(columns.coerceIn(2, 8)),
@@ -190,14 +204,21 @@ fun AlbumsGrid(
     ) {
         items(albums, key = { it.id }) { album ->
             Column(Modifier.clickable { onOpen(album) }) {
-                AsyncImage(
-                    model = rememberImageRequest(album.cover.uri, 384),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
+                BoxWithConstraints(
+                    Modifier
                         .aspectRatio(1f)
                         .clip(RoundedCornerShape(16.dp)),
-                )
+                ) {
+                    val coverSizePx = with(LocalDensity.current) {
+                        maxWidth.roundToPx().coerceIn(1, 1024)
+                    }
+                    AsyncImage(
+                        model = rememberImageRequest(album.cover.uri, coverSizePx),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
                 Text(
                     album.name,
                     style = MaterialTheme.typography.titleSmall,

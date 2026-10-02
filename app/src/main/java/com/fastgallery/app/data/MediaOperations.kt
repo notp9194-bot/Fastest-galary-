@@ -1,6 +1,7 @@
 package com.fastgallery.app.data
 
 import android.app.WallpaperManager
+import android.app.ActivityManager
 import android.content.ContentValues
 import android.content.Context
 import android.media.MediaScannerConnection
@@ -17,6 +18,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
+import kotlin.math.sqrt
 
 data class ImageEdit(
     val rotationDegrees: Float = 0f,
@@ -25,6 +27,9 @@ data class ImageEdit(
 )
 
 object MediaOperations {
+    private const val MAX_EDIT_PIXELS_NORMAL = 8_000_000L
+    private const val MAX_EDIT_PIXELS_LOW_RAM = 4_000_000L
+
     fun rename(context: Context, item: MediaItem, name: String): Int {
         val entered = name.trim().takeIf { it.isNotEmpty() } ?: return 0
         val extension = item.name.substringAfterLast('.', "")
@@ -92,54 +97,146 @@ object MediaOperations {
     /** Saves a non-destructive edited copy. Original is never overwritten. */
     fun saveEditedCopy(context: Context, item: MediaItem, edit: ImageEdit): Uri? {
         require(!item.isVideo) { "Video editing is not supported by this tool" }
-        val source = context.contentResolver.openInputStream(item.uri)?.use { BitmapFactory.decodeStream(it) } ?: return null
-        var bitmap = source
-        if (edit.rotationDegrees % 360f != 0f) {
-            val matrix = Matrix().apply { postRotate(edit.rotationDegrees) }
-            bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-            if (bitmap !== source) source.recycle()
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val maxPixels = if (activityManager?.isLowRamDevice == true) {
+            MAX_EDIT_PIXELS_LOW_RAM
+        } else {
+            MAX_EDIT_PIXELS_NORMAL
         }
-        edit.cropRatio?.let { ratio ->
-            if (ratio > 0f && bitmap.width > 0 && bitmap.height > 0) {
-                val currentRatio = bitmap.width.toFloat() / bitmap.height
-                val width = if (currentRatio > ratio) (bitmap.height * ratio).toInt() else bitmap.width
-                val height = if (currentRatio > ratio) bitmap.height else (bitmap.width / ratio).toInt()
-                val x = (bitmap.width - width) / 2
-                val y = (bitmap.height - height) / 2
-                val cropped = Bitmap.createBitmap(bitmap, x, y, width.coerceAtLeast(1), height.coerceAtLeast(1))
-                if (cropped !== bitmap) bitmap.recycle()
-                bitmap = cropped
-            }
-        }
-        val filtered = if (edit.filter == "Original") bitmap else applyFilter(bitmap, edit.filter)
-        if (filtered !== bitmap) bitmap.recycle()
-        val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, "${item.name.substringBeforeLast('.', item.name)}_edited.jpg")
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= 29) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/FastGallery/Edited/")
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
-            }
-        }
-        val resolver = context.contentResolver
-        val uri = resolver.insert(collection, values)
+        val sourceBitmap = decodeBoundedBitmap(context, item.uri, maxPixels) ?: return null
+        var bitmap = sourceBitmap
+        var outputUri: Uri? = null
         try {
-            if (uri != null) resolver.openOutputStream(uri, "w").use { output ->
-                requireNotNull(output) { "Could not create edited image" }
-                filtered.compress(Bitmap.CompressFormat.JPEG, 94, output)
+            val (exifRotation, exifFlipped) = readExifTransform(context, item.uri)
+            val userRotation = ((edit.rotationDegrees % 360f) + 360f) % 360f
+            val needsTransform = exifRotation != 0 || exifFlipped || userRotation != 0f
+            if (needsTransform) {
+                val matrix = Matrix().apply {
+                    if (exifRotation != 0) postRotate(exifRotation.toFloat())
+                    if (exifFlipped) postScale(-1f, 1f)
+                    if (userRotation != 0f) postRotate(userRotation)
+                }
+                val oriented = Bitmap.createBitmap(
+                    bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true,
+                )
+                if (oriented !== bitmap) {
+                    bitmap.recycle()
+                    bitmap = oriented
+                }
             }
-            if (uri != null && Build.VERSION.SDK_INT >= 29) {
-                resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+
+            edit.cropRatio?.let { ratio ->
+                if (ratio > 0f && bitmap.width > 0 && bitmap.height > 0) {
+                    val currentRatio = bitmap.width.toFloat() / bitmap.height
+                    val width = if (currentRatio > ratio) (bitmap.height * ratio).toInt() else bitmap.width
+                    val height = if (currentRatio > ratio) bitmap.height else (bitmap.width / ratio).toInt()
+                    val x = (bitmap.width - width) / 2
+                    val y = (bitmap.height - height) / 2
+                    val cropped = Bitmap.createBitmap(
+                        bitmap,
+                        x,
+                        y,
+                        width.coerceIn(1, bitmap.width),
+                        height.coerceIn(1, bitmap.height),
+                    )
+                    if (cropped !== bitmap) {
+                        bitmap.recycle()
+                        bitmap = cropped
+                    }
+                }
             }
-            return uri
-        } catch (error: Exception) {
-            uri?.let { resolver.delete(it, null, null) }
+
+            if (edit.filter != "Original") {
+                val filtered = applyFilter(bitmap, edit.filter)
+                if (filtered !== bitmap) {
+                    bitmap.recycle()
+                    bitmap = filtered
+                }
+            }
+
+            val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, "${item.name.substringBeforeLast('.', item.name)}_edited.jpg")
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                if (Build.VERSION.SDK_INT >= 29) {
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/FastGallery/Edited/")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+            }
+            val resolver = context.contentResolver
+            val createdUri = resolver.insert(collection, values) ?: return null
+            outputUri = createdUri
+            val outputStream = resolver.openOutputStream(createdUri, "w")
+                ?: error("Could not create edited image")
+            outputStream.use { output ->
+                check(bitmap.compress(Bitmap.CompressFormat.JPEG, 94, output)) {
+                    "Could not encode edited image"
+                }
+            }
+            if (Build.VERSION.SDK_INT >= 29) {
+                resolver.update(
+                    createdUri,
+                    ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+                    null,
+                    null,
+                )
+            }
+            return createdUri
+        } catch (error: Throwable) {
+            outputUri?.let { context.contentResolver.delete(it, null, null) }
             throw error
         } finally {
-            filtered.recycle()
+            if (!bitmap.isRecycled) bitmap.recycle()
         }
     }
+
+    private fun decodeBoundedBitmap(context: Context, uri: Uri, maxPixels: Long): Bitmap? {
+        val resolver = context.contentResolver
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        val boundsInput = resolver.openInputStream(uri) ?: return null
+        boundsInput.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sampleSize = 1
+        while (
+            (bounds.outWidth.toLong() / sampleSize) *
+            (bounds.outHeight.toLong() / sampleSize) > maxPixels * 2L
+        ) {
+            sampleSize *= 2
+        }
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        val decoded = resolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, options)
+        } ?: return null
+        val decodedPixels = decoded.width.toLong() * decoded.height.toLong()
+        if (decodedPixels <= maxPixels) return decoded
+
+        val scale = sqrt(maxPixels.toDouble() / decodedPixels)
+        return try {
+            Bitmap.createScaledBitmap(
+                decoded,
+                (decoded.width * scale).toInt().coerceAtLeast(1),
+                (decoded.height * scale).toInt().coerceAtLeast(1),
+                true,
+            ).also { if (it !== decoded) decoded.recycle() }
+        } catch (error: Throwable) {
+            if (!decoded.isRecycled) decoded.recycle()
+            throw error
+        }
+    }
+
+    private fun readExifTransform(context: Context, uri: Uri): Pair<Int, Boolean> =
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val exif = ExifInterface(input)
+                exif.rotationDegrees to exif.isFlipped
+            } ?: (0 to false)
+        } catch (_: Exception) {
+            0 to false
+        }
 
     private fun applyFilter(source: Bitmap, filter: String): Bitmap {
         val matrix = when (filter) {
