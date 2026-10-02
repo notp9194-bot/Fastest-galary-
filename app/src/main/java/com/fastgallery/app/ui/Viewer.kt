@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
@@ -53,6 +54,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -68,6 +70,7 @@ import com.fastgallery.app.data.MediaOperations
 import com.fastgallery.app.data.isRaw
 import com.fastgallery.app.findActivity
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 
 @Composable
 fun Viewer(
@@ -118,7 +121,11 @@ fun Viewer(
             beyondViewportPageCount = 1,
             key = { items[it].key },
         ) { page ->
-            ViewerPage(items[page]) { chrome = !chrome }
+            ViewerPage(
+                item = items[page],
+                onTap = { chrome = !chrome },
+                onDismiss = onClose,
+            )
         }
         AnimatedVisibility(chrome, modifier = Modifier.align(Alignment.TopStart)) {
             Row(
@@ -275,10 +282,12 @@ private fun EditDialog(name: String, onDismiss: () -> Unit, onSave: (ImageEdit) 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ViewerPage(item: MediaItem, onTap: () -> Unit) {
+private fun ViewerPage(item: MediaItem, onTap: () -> Unit, onDismiss: () -> Unit) {
     var scale by remember(item.key) { mutableFloatStateOf(1f) }
     var offset by remember(item.key) { mutableStateOf(Offset.Zero) }
     var box by remember(item.key) { mutableStateOf(IntSize.Zero) }
+    var dismissOffset by remember(item.key) { mutableFloatStateOf(0f) }
+    val closeThreshold = with(LocalDensity.current) { 120.dp.toPx() }
     val transformState = rememberTransformableState { zoom, pan, _ ->
         scale = (scale * zoom).coerceIn(1f, 6f)
         val maxX = box.width * (scale - 1f) / 2f
@@ -288,7 +297,25 @@ private fun ViewerPage(item: MediaItem, onTap: () -> Unit) {
             (offset.y + pan.y).coerceIn(-maxY, maxY),
         )
     }
-    var modifier = Modifier.fillMaxSize().onSizeChanged { box = it }.pointerInput(item.key) {
+    var modifier = Modifier.fillMaxSize()
+        .pointerInput(item.key, scale, onDismiss) {
+            if (scale <= 1.01f) {
+                detectVerticalDragGestures(
+                    onVerticalDrag = { change, dragAmount ->
+                        dismissOffset = (dismissOffset + dragAmount)
+                            .coerceIn(-size.height.toFloat(), size.height.toFloat())
+                        change.consume()
+                    },
+                    onDragEnd = {
+                        if (abs(dismissOffset) >= closeThreshold) onDismiss()
+                        else dismissOffset = 0f
+                    },
+                    onDragCancel = { dismissOffset = 0f },
+                )
+            }
+        }
+        .onSizeChanged { box = it }
+        .pointerInput(item.key) {
         detectTapGestures(onTap = { onTap() }, onDoubleTap = {
             if (!item.isVideo) {
                 if (scale > 1f) { scale = 1f; offset = Offset.Zero } else scale = 2.5f
@@ -296,7 +323,11 @@ private fun ViewerPage(item: MediaItem, onTap: () -> Unit) {
         })
     }
     if (!item.isVideo) modifier = modifier.transformable(transformState, canPan = { scale > 1f })
-    Box(modifier) {
+    Box(modifier.graphicsLayer {
+        translationY = dismissOffset
+        val height = size.height.coerceAtLeast(1f)
+        alpha = 1f - (abs(dismissOffset) / height).coerceIn(0f, 0.65f)
+    }) {
         if (item.isVideo) {
             VideoPlayer(item)
         } else {

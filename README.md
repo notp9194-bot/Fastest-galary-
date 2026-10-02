@@ -5,8 +5,8 @@ Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26
 ## Features
 
 - Photos and videos with albums, date headers, animated GIF decoding, and device-provided RAW previews.
-- In-app video playback, photo zoom, slideshow, photo details and available EXIF metadata.
-- Search, media-type filters (photos, videos, GIF and RAW), sort by date/name/size, grid column pinch zoom, and a fast scroll handle.
+- In-app video playback, photo zoom, swipe up/down to close the viewer, slideshow, photo details and available EXIF metadata.
+- Search, media-type filters (photos, videos, GIF and RAW), sort by date/name/size, grid column pinch zoom, fast scroll handle, and grid fling friction set to 0.007.
 - Long-press multi-select with bulk share, favorites and trash actions.
 - Rename, copy to another album/folder, or move (copy followed by Android's delete approval).
 - Local Trash with restore, favorite collection, album hide, and device-authenticated album lock.

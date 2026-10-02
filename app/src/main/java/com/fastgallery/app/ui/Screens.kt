@@ -3,8 +3,10 @@ package com.fastgallery.app.ui
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.ScrollableDefaults
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -74,10 +76,13 @@ fun MediaGrid(
     val scope = rememberCoroutineScope()
     val currentColumns by rememberUpdatedState(columns)
     val changeColumns by rememberUpdatedState(onPinchColumns)
+    val gridDecay = remember { exponentialDecay<Float>(frictionMultiplier = 0.007f) }
+    val gridFlingBehavior = ScrollableDefaults.flingBehavior(decayAnimationSpec = gridDecay)
     Box(Modifier.fillMaxSize()) {
         LazyVerticalGrid(
             columns = if (columns == 0) GridCells.Adaptive(112.dp) else GridCells.Fixed(columns.coerceIn(2, 8)),
             state = gridState,
+            flingBehavior = gridFlingBehavior,
             modifier = Modifier.fillMaxSize().pointerInput(Unit) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
