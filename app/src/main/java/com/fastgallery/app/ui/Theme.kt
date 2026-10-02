@@ -11,8 +11,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
 @Composable
-fun GalleryTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
+fun GalleryTheme(mode: String = "system", content: @Composable () -> Unit) {
+    val dark = when (mode) {
+        "dark" -> true
+        "light" -> false
+        else -> isSystemInDarkTheme()
+    }
     val ctx = LocalContext.current
     val scheme = when {
         Build.VERSION.SDK_INT >= 31 ->

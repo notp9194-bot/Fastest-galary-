@@ -18,7 +18,10 @@ fun mediaPermissions(): Array<String> = when {
         Manifest.permission.READ_MEDIA_IMAGES,
         Manifest.permission.READ_MEDIA_VIDEO,
     )
-    else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    else -> arrayOf(
+        Manifest.permission.READ_EXTERNAL_STORAGE,
+        Manifest.permission.WRITE_EXTERNAL_STORAGE,
+    )
 }
 
 fun hasMediaAccess(ctx: Context): Boolean =

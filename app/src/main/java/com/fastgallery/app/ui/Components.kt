@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -36,13 +38,19 @@ fun rememberImageRequest(uri: Uri, size: Int): ImageRequest {
     return remember(uri, size) { ImageRequest.Builder(ctx).data(uri).size(size).build() }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun Thumb(item: MediaItem, onClick: () -> Unit) {
+fun Thumb(
+    item: MediaItem,
+    selected: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = onClick,
+) {
     Box(
         Modifier
             .aspectRatio(1f)
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         AsyncImage(
             model = rememberImageRequest(item.uri, 256),
@@ -67,6 +75,19 @@ fun Thumb(item: MediaItem, onClick: () -> Unit) {
                 )
             }
         }
+        if (selected) {
+            Box(
+                Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.28f)),
+                contentAlignment = Alignment.TopEnd,
+            ) {
+                Icon(
+                    Icons.Filled.CheckCircle,
+                    "Selected",
+                    tint = Color.White,
+                    modifier = Modifier.padding(6.dp).size(22.dp),
+                )
+            }
+        }
     }
 }
 
@@ -85,6 +106,16 @@ fun shareItem(ctx: Context, item: MediaItem) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     ctx.startActivity(Intent.createChooser(send, null))
+}
+
+fun shareItems(ctx: Context, items: List<MediaItem>) {
+    if (items.isEmpty()) return
+    val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+        type = if (items.all { it.isVideo }) "video/*" else if (items.all { !it.isVideo }) "image/*" else "*/*"
+        putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(items.map { it.uri }))
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    ctx.startActivity(Intent.createChooser(send, "Share selected media"))
 }
 
 fun openVideo(ctx: Context, item: MediaItem) {

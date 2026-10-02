@@ -7,25 +7,37 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -47,25 +59,58 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import coil.compose.AsyncImage
+import com.fastgallery.app.data.ImageEdit
 import com.fastgallery.app.data.MediaItem
+import com.fastgallery.app.data.MediaOperations
+import com.fastgallery.app.data.isRaw
 import com.fastgallery.app.findActivity
+import kotlinx.coroutines.delay
 
 @Composable
-fun Viewer(items: List<MediaItem>, startIndex: Int, onClose: () -> Unit) {
+fun Viewer(
+    items: List<MediaItem>,
+    startIndex: Int,
+    favoriteKeys: Set<String>,
+    trashedKeys: Set<String>,
+    onClose: () -> Unit,
+    onFavorite: (MediaItem) -> Unit,
+    onSetTrashed: (MediaItem, Boolean) -> Unit,
+    onDelete: (MediaItem) -> Unit,
+    onRename: (MediaItem, String) -> Unit,
+    onCopyOrMove: (MediaItem, String, Boolean) -> Unit,
+    onWallpaper: (MediaItem) -> Unit,
+    onEdit: (MediaItem, ImageEdit) -> Unit,
+) {
     val ctx = LocalContext.current
     val pager = rememberPagerState(initialPage = startIndex.coerceIn(0, items.lastIndex)) { items.size }
     var chrome by remember { mutableStateOf(true) }
+    var slideshow by remember { mutableStateOf(false) }
+    var details by remember { mutableStateOf<MediaItem?>(null) }
+    var renameTarget by remember { mutableStateOf<MediaItem?>(null) }
+    var copyTarget by remember { mutableStateOf<MediaItem?>(null) }
+    var editTarget by remember { mutableStateOf<MediaItem?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    var folderText by remember { mutableStateOf("") }
+    var moveAfterCopy by remember { mutableStateOf(false) }
 
-    // Immersive mode: viewer me status/nav bar hide
     DisposableEffect(Unit) {
         val window = ctx.findActivity()?.window
-        val ctrl = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
-        ctrl?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        ctrl?.hide(WindowInsetsCompat.Type.systemBars())
-        onDispose { ctrl?.show(WindowInsetsCompat.Type.systemBars()) }
+        val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller?.hide(WindowInsetsCompat.Type.systemBars())
+        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+    LaunchedEffect(slideshow, items.size) {
+        while (slideshow && items.isNotEmpty()) {
+            delay(2800)
+            pager.animateScrollToPage((pager.currentPage + 1) % items.size)
+        }
     }
 
+    val current = items.getOrNull(pager.currentPage)
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         HorizontalPager(
             state = pager,
@@ -75,15 +120,11 @@ fun Viewer(items: List<MediaItem>, startIndex: Int, onClose: () -> Unit) {
         ) { page ->
             ViewerPage(items[page]) { chrome = !chrome }
         }
-
-        val current = items.getOrNull(pager.currentPage)
         AnimatedVisibility(chrome, modifier = Modifier.align(Alignment.TopStart)) {
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.65f), Color.Transparent)))
-                    .statusBarsPadding()
-                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                Modifier.fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent)))
+                    .statusBarsPadding().padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onClose) {
@@ -96,23 +137,149 @@ fun Viewer(items: List<MediaItem>, startIndex: Int, onClose: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                TextButton(onClick = { slideshow = !slideshow }) {
+                    Text(if (slideshow) "Pause" else "Slide", color = Color.White)
+                }
                 IconButton(onClick = { current?.let { shareItem(ctx, it) } }) {
                     Icon(Icons.Filled.Share, "Share", tint = Color.White)
                 }
             }
         }
+        AnimatedVisibility(chrome, modifier = Modifier.align(Alignment.BottomCenter)) {
+            Row(
+                Modifier.fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f))))
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 12.dp)
+                    .navigationBarsPadding(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                current?.let { item ->
+                    ControlButton(if (item.key in favoriteKeys) "★ Saved" else "☆ Favorite") { onFavorite(item) }
+                    ControlButton(if (item.key in trashedKeys) "Restore" else "Trash") {
+                        onSetTrashed(item, item.key !in trashedKeys)
+                    }
+                    ControlButton("Delete") { onDelete(item) }
+                    ControlButton("Rename") {
+                        renameText = item.name
+                        renameTarget = item
+                    }
+                    ControlButton("Copy / move") {
+                        folderText = item.bucketName
+                        moveAfterCopy = false
+                        copyTarget = item
+                    }
+                    ControlButton("Edit") { if (!item.isVideo) editTarget = item }
+                    ControlButton("Details") { details = item }
+                    ControlButton("Wallpaper") { if (!item.isVideo) onWallpaper(item) }
+                }
+            }
+        }
     }
+
+    details?.let { item ->
+        val rows = remember(item.key) { MediaOperations.exifDetails(ctx, item) }
+        AlertDialog(
+            onDismissRequest = { details = null },
+            title = { Text("Photo details") },
+            text = {
+                Column(Modifier.fillMaxWidth()) {
+                    rows.forEach { (label, value) ->
+                        Text("$label: $value", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 3.dp))
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { details = null }) { Text("Close") } },
+        )
+    }
+    renameTarget?.let { item ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("Rename media") },
+            text = {
+                OutlinedTextField(
+                    value = renameText, onValueChange = { renameText = it },
+                    label = { Text("File name") }, singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { onRename(item, renameText); renameTarget = null }) { Text("Rename") }
+            },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } },
+        )
+    }
+    copyTarget?.let { item ->
+        AlertDialog(
+            onDismissRequest = { copyTarget = null },
+            title = { Text("Copy or move to album") },
+            text = {
+                Column {
+                    OutlinedTextField(value = folderText, onValueChange = { folderText = it }, label = { Text("Album / folder name") })
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Delete original after copy")
+                        Switch(checked = moveAfterCopy, onCheckedChange = { moveAfterCopy = it })
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { onCopyOrMove(item, folderText, moveAfterCopy); copyTarget = null }) { Text("Continue") }
+            },
+            dismissButton = { TextButton(onClick = { copyTarget = null }) { Text("Cancel") } },
+        )
+    }
+    editTarget?.let { item -> EditDialog(item.name, onDismiss = { editTarget = null }) { edit ->
+        onEdit(item, edit)
+        editTarget = null
+    } }
+}
+
+@Composable
+private fun ControlButton(label: String, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick) { Text(label, color = Color.White, maxLines = 1) }
+}
+
+@Composable
+private fun EditDialog(name: String, onDismiss: () -> Unit, onSave: (ImageEdit) -> Unit) {
+    var rotation by remember { mutableFloatStateOf(0f) }
+    var crop by remember { mutableStateOf<Float?>(null) }
+    var filter by remember { mutableStateOf("Original") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit · $name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Rotate: ${rotation.toInt()}°")
+                Slider(value = rotation, onValueChange = { rotation = (it / 90f).toInt() * 90f }, valueRange = 0f..270f, steps = 2)
+                Text("Crop")
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Free" to null, "Square" to 1f, "4:3" to (4f / 3f)).forEach { (label, ratio) ->
+                        if (crop == ratio) Button(onClick = { crop = ratio }) { Text(label) }
+                        else OutlinedButton(onClick = { crop = ratio }) { Text(label) }
+                    }
+                }
+                Text("Filter")
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Original", "Mono", "Warm", "Cool").forEach { option ->
+                        if (filter == option) Button(onClick = { filter = option }) { Text(option) }
+                        else OutlinedButton(onClick = { filter = option }) { Text(option) }
+                    }
+                }
+                Text("Saves a new edited copy; the original stays unchanged.", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(ImageEdit(rotation, crop, filter)) }) { Text("Save copy") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ViewerPage(item: MediaItem, onTap: () -> Unit) {
-    val ctx = LocalContext.current
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
-    var box by remember { mutableStateOf(IntSize.Zero) }
-
-    val tState = rememberTransformableState { zoom, pan, _ ->
+    var scale by remember(item.key) { mutableFloatStateOf(1f) }
+    var offset by remember(item.key) { mutableStateOf(Offset.Zero) }
+    var box by remember(item.key) { mutableStateOf(IntSize.Zero) }
+    val transformState = rememberTransformableState { zoom, pan, _ ->
         scale = (scale * zoom).coerceIn(1f, 6f)
         val maxX = box.width * (scale - 1f) / 2f
         val maxY = box.height * (scale - 1f) / 2f
@@ -121,50 +288,35 @@ private fun ViewerPage(item: MediaItem, onTap: () -> Unit) {
             (offset.y + pan.y).coerceIn(-maxY, maxY),
         )
     }
-
-    var modifier = Modifier
-        .fillMaxSize()
-        .onSizeChanged { box = it }
-        .pointerInput(item.key) {
-            detectTapGestures(
-                onTap = { onTap() },
-                onDoubleTap = {
-                    if (item.isVideo) return@detectTapGestures
-                    if (scale > 1f) {
-                        scale = 1f
-                        offset = Offset.Zero
-                    } else {
-                        scale = 2.5f
-                    }
+    var modifier = Modifier.fillMaxSize().onSizeChanged { box = it }.pointerInput(item.key) {
+        detectTapGestures(onTap = { onTap() }, onDoubleTap = {
+            if (!item.isVideo) {
+                if (scale > 1f) { scale = 1f; offset = Offset.Zero } else scale = 2.5f
+            }
+        })
+    }
+    if (!item.isVideo) modifier = modifier.transformable(transformState, canPan = { scale > 1f })
+    Box(modifier) {
+        if (item.isVideo) {
+            VideoPlayer(item)
+        } else {
+            AsyncImage(
+                model = rememberImageRequest(item.uri, 4096),
+                contentDescription = item.name,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().graphicsLayer {
+                    scaleX = scale; scaleY = scale
+                    translationX = offset.x; translationY = offset.y
                 },
             )
-        }
-    if (!item.isVideo) modifier = modifier.transformable(tState, canPan = { scale > 1f })
-
-    Box(modifier) {
-        AsyncImage(
-            model = rememberImageRequest(item.uri, 2048),
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = offset.x
-                    translationY = offset.y
-                },
-        )
-        if (item.isVideo) {
-            Box(
-                Modifier
-                    .align(Alignment.Center)
-                    .size(72.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), CircleShape)
-                    .clickable { openVideo(ctx, item) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Filled.PlayArrow, "Play", tint = Color.White, modifier = Modifier.size(44.dp))
+            if (item.isRaw()) {
+                Text(
+                    "RAW",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp)
+                        .background(Color.Black.copy(alpha = 0.65f), CircleShape).padding(horizontal = 10.dp, vertical = 5.dp),
+                )
             }
         }
     }

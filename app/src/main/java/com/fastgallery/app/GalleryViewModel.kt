@@ -11,6 +11,7 @@ import com.fastgallery.app.data.Album
 import com.fastgallery.app.data.GridEntry
 import com.fastgallery.app.data.MediaItem
 import com.fastgallery.app.data.MediaRepository
+import com.fastgallery.app.data.GalleryPreferences
 import com.fastgallery.app.data.buildAlbums
 import com.fastgallery.app.data.buildEntries
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +27,10 @@ data class GalleryState(
     val items: List<MediaItem> = emptyList(),
     val entries: List<GridEntry> = emptyList(),
     val albums: List<Album> = emptyList(),
+    val favoriteKeys: Set<String> = emptySet(),
+    val trashKeys: Set<String> = emptySet(),
+    val hiddenAlbumIds: Set<String> = emptySet(),
+    val lockedAlbumIds: Set<String> = emptySet(),
 )
 
 class GalleryViewModel(app: Application) : AndroidViewModel(app) {
@@ -60,8 +65,21 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                 items = items,
                 entries = buildEntries(items),
                 albums = buildAlbums(items),
+                favoriteKeys = GalleryPreferences.favorites(getApplication()),
+                trashKeys = GalleryPreferences.trashed(getApplication()),
+                hiddenAlbumIds = GalleryPreferences.hiddenAlbums(getApplication()),
+                lockedAlbumIds = GalleryPreferences.lockedAlbums(getApplication()),
             )
         }
+    }
+
+    fun refreshPreferences() {
+        _state.value = _state.value.copy(
+            favoriteKeys = GalleryPreferences.favorites(getApplication()),
+            trashKeys = GalleryPreferences.trashed(getApplication()),
+            hiddenAlbumIds = GalleryPreferences.hiddenAlbums(getApplication()),
+            lockedAlbumIds = GalleryPreferences.lockedAlbums(getApplication()),
+        )
     }
 
     override fun onCleared() {

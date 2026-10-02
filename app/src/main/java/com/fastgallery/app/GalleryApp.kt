@@ -4,6 +4,7 @@ import android.app.Application
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
+import coil.decode.GifDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 
@@ -11,7 +12,10 @@ import coil.memory.MemoryCache
 class GalleryApp : Application(), ImageLoaderFactory {
     override fun newImageLoader(): ImageLoader =
         ImageLoader.Builder(this)
-            .components { add(VideoFrameDecoder.Factory()) }
+            .components {
+                add(VideoFrameDecoder.Factory())
+                add(GifDecoder.Factory())
+            }
             .memoryCache { MemoryCache.Builder(this).maxSizePercent(0.30).build() }
             .diskCache {
                 DiskCache.Builder()

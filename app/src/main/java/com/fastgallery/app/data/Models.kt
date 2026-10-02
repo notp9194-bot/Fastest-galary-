@@ -16,9 +16,14 @@ data class MediaItem(
     val durationMs: Long,
     val bucketId: Long,
     val bucketName: String,
+    val sizeBytes: Long = 0L,
+    val width: Int = 0,
+    val height: Int = 0,
+    val dateTaken: Long = 0L,
+    val relativePath: String = "",
 ) {
-    /** Images aur videos ke IDs collide ho sakte hain, isliye alag key. */
-    val key: Long get() = id * 2 + if (isVideo) 1 else 0
+    /** Images aur videos ke IDs collide ho sakte hain; URI is the stable cross-table key. */
+    val key: String get() = uri.toString()
 }
 
 data class Album(
@@ -62,3 +67,18 @@ fun buildEntries(items: List<MediaItem>): List<GridEntry> {
     }
     return out
 }
+
+enum class GallerySort { DATE_NEWEST, DATE_OLDEST, NAME, SIZE_LARGEST }
+enum class MediaFilter { ALL, PHOTOS, VIDEOS, GIFS, RAW }
+
+fun MediaItem.matchesFilter(filter: MediaFilter): Boolean = when (filter) {
+    MediaFilter.ALL -> true
+    MediaFilter.PHOTOS -> !isVideo && !mime.contains("gif", true) && !isRaw()
+    MediaFilter.VIDEOS -> isVideo
+    MediaFilter.GIFS -> mime.contains("gif", true)
+    MediaFilter.RAW -> isRaw()
+}
+
+fun MediaItem.isRaw(): Boolean =
+    mime.contains("dng", true) || mime.contains("raw", true) ||
+        name.substringAfterLast('.', "").lowercase() in setOf("dng", "nef", "cr2", "cr3", "arw", "orf", "rw2", "raf")
