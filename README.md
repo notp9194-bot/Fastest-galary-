@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.3
+# Fast Gallery 1.4.4
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -31,6 +31,19 @@ gradle assembleDebug
 ```
 
 GitHub Actions builds debug and release APK artifacts when pushed to the configured branches/tags.
+
+## Startup / first-open speed updates in 1.4.4
+
+- MediaStore query now starts in `MainActivity.onCreate`, before Compose's first frame, instead of waiting for `ON_RESUME`.
+- First page is 90 items (was 250); later scroll pages are 300, and full loads for Albums/search/sort use 2000-item pages.
+- Refresh keeps the already-loaded window size, so the grid no longer shrinks and jumps after a media change.
+- Removed the 180 ms debounce on every tab/data change; it now applies only while typing in search.
+- Grid and album thumbnails use `ContentResolver.loadThumbnail` (API 29+, system-cached thumbnails) through a custom Coil fetcher; API 26-28 keep sampled Coil decoding.
+- Per-cell `BoxWithConstraints` was removed from the grid; the cell size is computed once for the whole grid.
+- Theme/preferences file and the Coil ImageLoader are warmed up on a background thread in `Application.onCreate`.
+- Display filtering skips the list copy when nothing is hidden or trashed.
+
+Build and device performance checks have not been run for this source update.
 
 ## Performance updates in 1.4.3
 

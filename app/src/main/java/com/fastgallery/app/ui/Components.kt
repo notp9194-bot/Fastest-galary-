@@ -4,11 +4,11 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,10 +28,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import coil.size.Precision
 import com.fastgallery.app.data.MediaItem
 
 @Composable
@@ -40,25 +40,40 @@ fun rememberImageRequest(uri: Uri, size: Int): ImageRequest {
     return remember(uri, size) { ImageRequest.Builder(ctx).data(uri).size(size).build() }
 }
 
+/**
+ * Grid/album thumbs: API 29+ pe MediaStore ke system-cached thumbnails (full decode se bahut fast),
+ * purane Android pe sampled Coil decode.
+ */
+@Composable
+fun rememberThumbRequest(uri: Uri, size: Int): ImageRequest {
+    val ctx = LocalContext.current
+    return remember(uri, size) {
+        val data: Any = if (Build.VERSION.SDK_INT >= 29) ThumbData(uri, size) else uri
+        ImageRequest.Builder(ctx)
+            .data(data)
+            .size(size)
+            .precision(Precision.INEXACT)
+            .build()
+    }
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun Thumb(
     item: MediaItem,
+    sizePx: Int,
     selected: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
 ) {
-    BoxWithConstraints(
+    Box(
         Modifier
             .aspectRatio(1f)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
-        val thumbnailSizePx = with(LocalDensity.current) {
-            maxWidth.roundToPx().coerceIn(1, 1024)
-        }
         AsyncImage(
-            model = rememberImageRequest(item.uri, thumbnailSizePx),
+            model = rememberThumbRequest(item.uri, sizePx),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),

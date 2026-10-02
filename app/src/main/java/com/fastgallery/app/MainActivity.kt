@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -88,7 +89,10 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { GalleryRoot() }
+        // MediaStore query composition se pehle hi shuru: Compose setup ke saath parallel chalti hai.
+        val vm = ViewModelProvider(this)[GalleryViewModel::class.java]
+        if (hasMediaAccess(this)) vm.refreshIfNeeded()
+        setContent { GalleryRoot(vm) }
     }
 }
 

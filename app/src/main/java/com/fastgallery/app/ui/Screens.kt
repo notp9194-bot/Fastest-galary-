@@ -60,6 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
@@ -127,6 +128,13 @@ fun MediaGrid(
     val currentColumns by rememberUpdatedState(columns)
     val changeColumns by rememberUpdatedState(onPinchColumns)
     val gridFlingBehavior = rememberGridFlingBehavior(flingFriction)
+    // Cell size ek hi baar nikalo (har Thumb me BoxWithConstraints subcompose bahut slow tha).
+    val density = LocalDensity.current
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val thumbPx = remember(columns, screenWidthDp, density.density) {
+        val cols = if (columns == 0) maxOf(1, screenWidthDp / 112) else columns.coerceIn(2, 8)
+        ((screenWidthDp - 2f * (cols - 1)) / cols * density.density).toInt().coerceIn(64, 1024)
+    }
     LaunchedEffect(gridState, items.size) {
         snapshotFlow {
             gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
@@ -189,6 +197,7 @@ fun MediaGrid(
                     )
                     is GridEntry.Media -> Thumb(
                         entry.item,
+                        sizePx = thumbPx,
                         selected = entry.item.key in selected,
                         onClick = { if (selected.isNotEmpty()) onToggleSelection(entry.item) else onOpen(entry.index) },
                         onLongClick = { onToggleSelection(entry.item) },
@@ -256,7 +265,7 @@ fun AlbumsGrid(
                         maxWidth.roundToPx().coerceIn(1, 1024)
                     }
                     AsyncImage(
-                        model = rememberImageRequest(album.cover.uri, coverSizePx),
+                        model = rememberThumbRequest(album.cover.uri, coverSizePx),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),

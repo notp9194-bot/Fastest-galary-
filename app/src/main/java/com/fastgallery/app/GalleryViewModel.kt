@@ -63,7 +63,10 @@ data class GalleryDisplayResult(
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
-        const val PAGE_SIZE = 250
+        const val FIRST_PAGE_SIZE = 90      // pehla paint: sirf itna chahiye
+        const val PAGE_SIZE = 300           // scroll pe agle pages
+        const val BULK_PAGE_SIZE = 2000     // search/albums/sort ke liye full load
+        const val MAX_REFRESH_WINDOW = 6000
         const val REFRESH_DEBOUNCE_MS = 700L
         const val SEARCH_DEBOUNCE_MS = 180L
     }
@@ -74,10 +77,16 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<GalleryState> = _state.asStateFlow()
 
     private val _query = MutableStateFlow(GalleryQuery())
-    val displayItems: Flow<GalleryDisplayResult> = combine(_state, _query) { gallery, query ->
+    private var lastSearchSeen = ""
+    // Debounce sirf search typing pe; tab/data change pe turant.
+    private val settledQuery: Flow<GalleryQuery> = _query.debounce { q ->
+        val typing = q.search != lastSearchSeen
+        lastSearchSeen = q.search
+        if (typing) SEARCH_DEBOUNCE_MS else 0L
+    }
+    val displayItems: Flow<GalleryDisplayResult> = combine(_state, settledQuery) { gallery, query ->
         gallery to query
     }
-        .debounce(SEARCH_DEBOUNCE_MS)
         .mapLatest { (gallery, query) ->
             val items = withContext(Dispatchers.Default) {
                 if (requiresCompleteLibrary(query) && gallery.hasMore) {
@@ -136,6 +145,9 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         pageJob?.cancel()
         loadAllJob?.cancel()
         val previous = _state.value
+        // Refresh pe pehle jitna window already loaded tha utna hi lao, taaki scroll jump na ho.
+        val windowSize = if (previous.items.isEmpty()) FIRST_PAGE_SIZE
+        else previous.items.size.coerceIn(FIRST_PAGE_SIZE, MAX_REFRESH_WINDOW)
         _state.value = previous.copy(
             loading = previous.items.isEmpty(),
             loadingMore = false,
@@ -143,7 +155,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         )
         pageJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                val page = repository.queryPage(offset = 0, pageSize = PAGE_SIZE)
+                val page = repository.queryPage(offset = 0, pageSize = windowSize)
                 coroutineContext.ensureActive()
                 if (generation != loadGeneration) return@launch
                 val nextItems = page.items
@@ -215,7 +227,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                     if (generation != loadGeneration) return@launch
                     val snapshot = _state.value
                     val offset = snapshot.items.size
-                    val page = repository.queryPage(offset = offset, pageSize = PAGE_SIZE)
+                    val page = repository.queryPage(offset = offset, pageSize = BULK_PAGE_SIZE)
                     coroutineContext.ensureActive()
                     if (generation != loadGeneration) return@launch
                     appendPage(offset, page.items, page.hasMore, keepLoading = page.hasMore)
@@ -273,18 +285,21 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun deriveDisplayItems(gallery: GalleryState, query: GalleryQuery): List<MediaItem> {
         if (query.tab == 4 || (query.tab == 1 && query.albumId == null)) return emptyList()
+        val hidden = gallery.hiddenAlbumIds.mapNotNullTo(HashSet()) { it.toLongOrNull() }
         val baseItems = when {
             query.tab == 3 -> gallery.items.filter { it.key in gallery.trashKeys }
             query.tab == 2 -> gallery.items.filter {
                 it.key in gallery.favoriteKeys &&
                     it.key !in gallery.trashKeys &&
-                    it.bucketId.toString() !in gallery.hiddenAlbumIds
+                    it.bucketId !in hidden
             }
             query.albumId != null -> gallery.items.filter {
                 it.bucketId == query.albumId && it.key !in gallery.trashKeys
             }
+            // Common case (koi hidden/trash nahi): list copy hi skip.
+            hidden.isEmpty() && gallery.trashKeys.isEmpty() -> gallery.items
             else -> gallery.items.filter {
-                it.bucketId.toString() !in gallery.hiddenAlbumIds && it.key !in gallery.trashKeys
+                it.bucketId !in hidden && it.key !in gallery.trashKeys
             }
         }
         val filtered = baseItems.asSequence()
