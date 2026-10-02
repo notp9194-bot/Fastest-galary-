@@ -135,7 +135,9 @@ private fun GalleryContent(
 ) {
     val ctx = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
-    val currentList by vm.displayItems.collectAsStateWithLifecycle(initialValue = emptyList())
+    val displayResult by vm.displayItems.collectAsStateWithLifecycle(
+        initialValue = GalleryDisplayResult(),
+    )
     val scope = rememberCoroutineScope()
     var granted by remember { mutableStateOf(hasMediaAccess(ctx)) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -165,22 +167,24 @@ private fun GalleryContent(
     var columns by rememberSaveable { mutableIntStateOf(GalleryPreferences.columns(ctx)) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var approvalAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val activeQuery = GalleryQuery(
+        tab = tab,
+        albumId = albumId,
+        search = search,
+        sort = sort,
+        filter = filter,
+    )
+    val displayContextStale =
+        displayResult.query?.tab != tab || displayResult.query?.albumId != albumId
+    val currentList = if (displayContextStale) emptyList() else displayResult.items
     val needsCompleteLibrary = tab != 0 ||
         albumId != null ||
         search.isNotBlank() ||
         sort != GallerySort.DATE_NEWEST ||
         filter != MediaFilter.ALL
 
-    LaunchedEffect(tab, albumId, search, sort, filter, state.itemsVersion) {
-        vm.setQuery(
-            GalleryQuery(
-                tab = tab,
-                albumId = albumId,
-                search = search,
-                sort = sort,
-                filter = filter,
-            ),
-        )
+    LaunchedEffect(activeQuery, state.itemsVersion) {
+        vm.setQuery(activeQuery)
         if (needsCompleteLibrary) vm.loadAll()
     }
 
@@ -417,6 +421,12 @@ private fun GalleryContent(
                             }
                         } else open()
                     }
+                }
+                displayContextStale -> Box(
+                    Modifier.fillMaxSize().padding(padding),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator()
                 }
                 currentList.isEmpty() -> CenterMessage(
                     when (tab) {

@@ -55,6 +55,11 @@ data class GalleryQuery(
     val filter: MediaFilter = MediaFilter.ALL,
 )
 
+data class GalleryDisplayResult(
+    val query: GalleryQuery? = null,
+    val items: List<MediaItem> = emptyList(),
+)
+
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
@@ -69,18 +74,19 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<GalleryState> = _state.asStateFlow()
 
     private val _query = MutableStateFlow(GalleryQuery())
-    val displayItems: Flow<List<MediaItem>> = combine(_state, _query) { gallery, query ->
+    val displayItems: Flow<GalleryDisplayResult> = combine(_state, _query) { gallery, query ->
         gallery to query
     }
         .debounce(SEARCH_DEBOUNCE_MS)
         .mapLatest { (gallery, query) ->
-            withContext(Dispatchers.Default) {
+            val items = withContext(Dispatchers.Default) {
                 if (requiresCompleteLibrary(query) && gallery.hasMore) {
                     emptyList()
                 } else {
                     deriveDisplayItems(gallery, query)
                 }
             }
+            GalleryDisplayResult(query, items)
         }
 
     private var pageJob: Job? = null
