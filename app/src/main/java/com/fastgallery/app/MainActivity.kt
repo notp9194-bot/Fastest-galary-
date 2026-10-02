@@ -15,16 +15,16 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -50,9 +50,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -312,13 +316,7 @@ private fun GalleryContent(
                             tonalElevation = 0.dp,
                         ) {
                             val destinations = remember {
-                                listOf(
-                                    "Photos" to Icons.Filled.Photo,
-                                    "Albums" to Icons.Filled.Folder,
-                                    "Favorites" to Icons.Filled.Favorite,
-                                    "Trash" to Icons.Filled.Delete,
-                                    "Settings" to Icons.Filled.Settings,
-                                )
+                                listOf("Photos", "Albums", "Favorites", "Trash", "Settings")
                             }
                             val itemColors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -327,7 +325,7 @@ private fun GalleryContent(
                                 unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                 unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            destinations.forEachIndexed { index, (label, icon) ->
+                            destinations.forEachIndexed { index, label ->
                                 val isSelected = tab == index
                                 val iconScale by animateFloatAsState(
                                     targetValue = if (isSelected) 1.08f else 1f,
@@ -342,14 +340,27 @@ private fun GalleryContent(
                                     },
                                     colors = itemColors,
                                     icon = {
-                                        Icon(
-                                            imageVector = icon,
-                                            contentDescription = label,
-                                            modifier = Modifier.graphicsLayer {
-                                                scaleX = iconScale
-                                                scaleY = iconScale
-                                            },
-                                        )
+                                        val iconTint = if (isSelected) {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
+                                        when (index) {
+                                            0 -> GridTabGlyph(iconTint, iconScale)
+                                            1 -> FolderTabGlyph(iconTint, iconScale)
+                                            else -> Icon(
+                                                imageVector = when (index) {
+                                                    2 -> Icons.Filled.Favorite
+                                                    3 -> Icons.Filled.Delete
+                                                    else -> Icons.Filled.Settings
+                                                },
+                                                contentDescription = label,
+                                                modifier = Modifier.graphicsLayer {
+                                                    scaleX = iconScale
+                                                    scaleY = iconScale
+                                                },
+                                            )
+                                        }
                                     },
                                     label = {
                                         Text(
@@ -511,5 +522,55 @@ private fun GalleryContent(
             confirmButton = { TextButton(onClick = { showFilters = false }) { Text("Done") } },
             dismissButton = { TextButton(onClick = { sort = GallerySort.DATE_NEWEST; filter = MediaFilter.ALL }) { Text("Reset") } },
         )
+    }
+}
+
+@Composable
+private fun GridTabGlyph(tint: Color, scale: Float) {
+    Canvas(
+        Modifier
+            .size(24.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale },
+    ) {
+        val side = size.minDimension
+        val gap = side * 0.12f
+        val cell = (side - gap * 3f) / 2f
+        for (row in 0..1) {
+            for (column in 0..1) {
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(gap + column * (cell + gap), gap + row * (cell + gap)),
+                    size = Size(cell, cell),
+                    cornerRadius = CornerRadius(cell * 0.18f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FolderTabGlyph(tint: Color, scale: Float) {
+    Canvas(
+        Modifier
+            .size(24.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale },
+    ) {
+        val w = size.width
+        val h = size.height
+        val folder = Path().apply {
+            moveTo(w * 0.09f, h * 0.25f)
+            lineTo(w * 0.39f, h * 0.25f)
+            lineTo(w * 0.51f, h * 0.38f)
+            lineTo(w * 0.88f, h * 0.38f)
+            quadraticTo(w * 0.95f, h * 0.38f, w * 0.93f, h * 0.47f)
+            lineTo(w * 0.85f, h * 0.77f)
+            quadraticTo(w * 0.83f, h * 0.84f, w * 0.76f, h * 0.84f)
+            lineTo(w * 0.17f, h * 0.84f)
+            quadraticTo(w * 0.09f, h * 0.84f, w * 0.08f, h * 0.76f)
+            lineTo(w * 0.06f, h * 0.35f)
+            quadraticTo(w * 0.06f, h * 0.25f, w * 0.09f, h * 0.25f)
+            close()
+        }
+        drawPath(path = folder, color = tint)
     }
 }

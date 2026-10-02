@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.1
+# Fast Gallery 1.4.2
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -32,7 +32,7 @@ gradle assembleDebug
 
 GitHub Actions builds debug and release APK artifacts when pushed to the configured branches/tags.
 
-## Performance updates in 1.4.1
+## Performance updates in 1.4.2
 
 - The Photos grid and viewer fetch MediaStore results in 250-item pages as the user approaches the end of the loaded list.
 - Photos and videos are paged together by MediaStore date-added order; provider-side ordering keeps page boundaries consistent.
@@ -45,6 +45,6 @@ GitHub Actions builds debug and release APK artifacts when pushed to the configu
 - Coil cache budgets are reduced and adjusted for low-RAM devices.
 - Edited images use sampled decoding, apply EXIF orientation before user edits, and recycle intermediate bitmaps on success or failure.
 - The Photos tab uses Android's frame-synchronized fling physics with friction set to 0.007; other media grids keep the standard 0.015 setting.
-- Bottom navigation uses a rounded, elevated surface, Material icons, themed selection colors, and a subtle selected-icon animation.
+- Bottom navigation uses a rounded, elevated surface, vector icons, themed selection colors, and a subtle selected-icon animation.
 
 Build and device performance checks have not been run for this source update.
