@@ -2,10 +2,14 @@ package com.fastgallery.app
 
 import android.app.Application
 import android.database.ContentObserver
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.MediaStore
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.fastgallery.app.data.Album
@@ -13,6 +17,7 @@ import com.fastgallery.app.data.GalleryPreferences
 import com.fastgallery.app.data.GallerySort
 import com.fastgallery.app.data.MediaFilter
 import com.fastgallery.app.data.MediaItem
+import com.fastgallery.app.data.MediaOperations
 import com.fastgallery.app.data.MediaRepository
 import com.fastgallery.app.data.buildAlbums
 import com.fastgallery.app.data.matchesFilter
@@ -43,6 +48,12 @@ data class GalleryState(
     val albums: List<Album> = emptyList(),
     val favoriteKeys: Set<String> = emptySet(),
     val trashKeys: Set<String> = emptySet(),
+    /** System (MediaStore) trash ke items, API 30+. */
+    val trashItems: List<MediaItem> = emptyList(),
+    /** Purane/fallback trash flags: key -> trash time (ms). */
+    val trashTimes: Map<String, Long> = emptyMap(),
+    /** Is session me authenticate hua locked album. Process/background ke baad null ho jaata hai. */
+    val unlockedAlbumId: Long? = null,
     val hiddenAlbumIds: Set<String> = emptySet(),
     val lockedAlbumIds: Set<String> = emptySet(),
 )
@@ -58,6 +69,8 @@ data class GalleryQuery(
 data class GalleryDisplayResult(
     val query: GalleryQuery? = null,
     val items: List<MediaItem> = emptyList(),
+    /** Har naye derived result pe badhta hai; UI isse grid ke entries rebuild karta hai. */
+    val version: Long = 0L,
 )
 
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
@@ -70,6 +83,10 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         const val REFRESH_DEBOUNCE_MS = 700L
         const val SEARCH_DEBOUNCE_MS = 180L
     }
+
+    /** UI ke liye snapshot state: composition ko turant dikhta hai (race se bachne ke liye). */
+    var unlockedAlbumId by mutableStateOf<Long?>(null)
+        private set
 
     private val resolver = app.contentResolver
     private val repository = MediaRepository(resolver)
@@ -95,8 +112,10 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                     deriveDisplayItems(gallery, query)
                 }
             }
-            GalleryDisplayResult(query, items)
+            GalleryDisplayResult(query, items, displayVersion.incrementAndGet())
         }
+
+    private val displayVersion = java.util.concurrent.atomic.AtomicLong(0L)
 
     private var pageJob: Job? = null
     private var loadAllJob: Job? = null
@@ -155,7 +174,9 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         )
         pageJob = viewModelScope.launch(Dispatchers.IO) {
             try {
+                purgeExpiredFallbackTrash()
                 val page = repository.queryPage(offset = 0, pageSize = windowSize)
+                val systemTrash = repository.queryTrashed()
                 coroutineContext.ensureActive()
                 if (generation != loadGeneration) return@launch
                 val nextItems = page.items
@@ -168,6 +189,8 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                     albums = if (page.hasMore) emptyList() else buildAlbums(nextItems),
                     favoriteKeys = GalleryPreferences.favorites(getApplication()),
                     trashKeys = GalleryPreferences.trashed(getApplication()),
+                    trashTimes = GalleryPreferences.trashTimes(getApplication()),
+                    trashItems = systemTrash,
                     hiddenAlbumIds = GalleryPreferences.hiddenAlbums(getApplication()),
                     lockedAlbumIds = GalleryPreferences.lockedAlbums(getApplication()),
                 )
@@ -267,10 +290,40 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /** 30 din purane fallback-trash items (API < 30) ko asli me delete karo. API 30+ pe system khud karta hai. */
+    private fun purgeExpiredFallbackTrash() {
+        if (Build.VERSION.SDK_INT >= 30) return
+        val app = getApplication<Application>()
+        val cutoff = System.currentTimeMillis() - GalleryPreferences.TRASH_RETENTION_MS
+        val expired = GalleryPreferences.trashTimes(app).filterValues { it < cutoff }.keys
+        if (expired.isEmpty()) return
+        val done = ArrayList<String>()
+        for (key in expired) {
+            val ok = runCatching {
+                MediaOperations.permanentlyDeleteUri(app, android.net.Uri.parse(key)) >= 0
+            }.getOrDefault(false)
+            if (ok) done += key
+        }
+        GalleryPreferences.setTrashedKeys(app, done, false)
+    }
+
+    /** Locked album authenticate ho gaya: sirf isi album ko is session me kholne do. */
+    fun markAlbumUnlocked(id: Long) {
+        unlockedAlbumId = id
+        _state.value = _state.value.copy(unlockedAlbumId = id)
+    }
+
+    /** App background me gaya: locked album dobara lock. */
+    fun relockAlbums() {
+        unlockedAlbumId = null
+        if (_state.value.unlockedAlbumId != null) _state.value = _state.value.copy(unlockedAlbumId = null)
+    }
+
     fun refreshPreferences() {
         _state.value = _state.value.copy(
             favoriteKeys = GalleryPreferences.favorites(getApplication()),
             trashKeys = GalleryPreferences.trashed(getApplication()),
+            trashTimes = GalleryPreferences.trashTimes(getApplication()),
             hiddenAlbumIds = GalleryPreferences.hiddenAlbums(getApplication()),
             lockedAlbumIds = GalleryPreferences.lockedAlbums(getApplication()),
         )
@@ -286,20 +339,28 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     private fun deriveDisplayItems(gallery: GalleryState, query: GalleryQuery): List<MediaItem> {
         if (query.tab == 4 || (query.tab == 1 && query.albumId == null)) return emptyList()
         val hidden = gallery.hiddenAlbumIds.mapNotNullTo(HashSet()) { it.toLongOrNull() }
+        val locked = gallery.lockedAlbumIds.mapNotNullTo(HashSet()) { it.toLongOrNull() }
+        // Hidden + locked albums Photos / Favorites / Trash / search me kabhi nahi dikhte.
+        // Locked album sirf authenticate hone ke baad apne album screen me khulta hai.
+        val restricted = HashSet<Long>(hidden).apply { addAll(locked) }
         val baseItems = when {
-            query.tab == 3 -> gallery.items.filter { it.key in gallery.trashKeys }
+            query.tab == 3 -> (gallery.trashItems + gallery.items.filter { it.key in gallery.trashKeys })
+                .filter { it.bucketId !in restricted }
+                .sortedByDescending { it.dateAdded }
             query.tab == 2 -> gallery.items.filter {
                 it.key in gallery.favoriteKeys &&
                     it.key !in gallery.trashKeys &&
-                    it.bucketId !in hidden
+                    it.bucketId !in restricted
             }
-            query.albumId != null -> gallery.items.filter {
-                it.bucketId == query.albumId && it.key !in gallery.trashKeys
+            query.albumId != null -> {
+                val id: Long = query.albumId
+                if (id in locked && gallery.unlockedAlbumId != id) emptyList()
+                else gallery.items.filter { it.bucketId == id && it.key !in gallery.trashKeys }
             }
-            // Common case (koi hidden/trash nahi): list copy hi skip.
-            hidden.isEmpty() && gallery.trashKeys.isEmpty() -> gallery.items
+            // Common case (koi hidden/locked/trash nahi): list copy hi skip.
+            restricted.isEmpty() && gallery.trashKeys.isEmpty() -> gallery.items
             else -> gallery.items.filter {
-                it.bucketId !in hidden && it.key !in gallery.trashKeys
+                it.bucketId !in restricted && it.key !in gallery.trashKeys
             }
         }
         val filtered = baseItems.asSequence()

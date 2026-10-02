@@ -8,12 +8,26 @@ import android.os.Bundle
 import android.provider.MediaStore
 
 class MediaRepository(private val cr: ContentResolver) {
+    private companion object {
+        const val TRASH_LIMIT = 5000
+    }
 
     /**
      * Loads a bounded window from the combined MediaStore.Files collection.
      * Sorting on the provider keeps page boundaries consistent for photos and videos.
      */
-    fun queryPage(offset: Int, pageSize: Int): MediaPage {
+    fun queryPage(offset: Int, pageSize: Int): MediaPage = query(offset, pageSize, trashedOnly = false)
+
+    /**
+     * System trash (API 30+): MediaStore me IS_TRASHED items. Default queries inhe chhupa deti hain,
+     * isliye MATCH_ONLY se alag se mangte hain. MediaStore khud 30 din baad inhe delete karta hai.
+     */
+    fun queryTrashed(): List<MediaItem> {
+        if (Build.VERSION.SDK_INT < 30) return emptyList()
+        return query(offset = 0, pageSize = TRASH_LIMIT, trashedOnly = true).items
+    }
+
+    private fun query(offset: Int, pageSize: Int, trashedOnly: Boolean): MediaPage {
         val collection = MediaStore.Files.getContentUri("external")
         val mediaTypeColumn = MediaStore.Files.FileColumns.MEDIA_TYPE
         val columns = mutableListOf(
@@ -31,6 +45,7 @@ class MediaRepository(private val cr: ContentResolver) {
             MediaStore.Video.Media.DURATION,
         ).distinct().toMutableList()
         if (Build.VERSION.SDK_INT >= 29) columns += MediaStore.MediaColumns.RELATIVE_PATH
+        if (trashedOnly) columns += MediaStore.MediaColumns.DATE_EXPIRES
         val args = Bundle().apply {
             putString(
                 ContentResolver.QUERY_ARG_SQL_SELECTION,
@@ -48,6 +63,9 @@ class MediaRepository(private val cr: ContentResolver) {
                 "${MediaStore.MediaColumns.DATE_ADDED} DESC, " +
                     "${MediaStore.MediaColumns._ID} DESC",
             )
+            if (trashedOnly && Build.VERSION.SDK_INT >= 30) {
+                putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_ONLY)
+            }
             putInt(ContentResolver.QUERY_ARG_LIMIT, pageSize + 1)
             putInt(ContentResolver.QUERY_ARG_OFFSET, offset.coerceAtLeast(0))
         }
@@ -68,6 +86,7 @@ class MediaRepository(private val cr: ContentResolver) {
                 val takenColumn = cursor.getColumnIndex(MediaStore.Images.ImageColumns.DATE_TAKEN)
                 val durationColumn = cursor.getColumnIndex(MediaStore.Video.Media.DURATION)
                 val pathColumn = cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
+                val expiresColumn = if (trashedOnly) cursor.getColumnIndex(MediaStore.MediaColumns.DATE_EXPIRES) else -1
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idColumn)
@@ -99,6 +118,8 @@ class MediaRepository(private val cr: ContentResolver) {
                         height = if (heightColumn >= 0) cursor.getInt(heightColumn) else 0,
                         dateTaken = dateTaken,
                         relativePath = if (pathColumn >= 0) cursor.getString(pathColumn).orEmpty() else "",
+                        isTrashed = trashedOnly,
+                        trashExpiresSec = if (expiresColumn >= 0 && !cursor.isNull(expiresColumn)) cursor.getLong(expiresColumn) else 0L,
                     )
                 }
             }

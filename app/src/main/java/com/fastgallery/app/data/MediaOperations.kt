@@ -17,12 +17,17 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
+import com.fastgallery.app.R
 import java.io.File
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
+
+/** Crop area as fractions (0..1) of the already-rotated image. */
+data class CropRect(val left: Float, val top: Float, val right: Float, val bottom: Float)
 
 data class ImageEdit(
     val rotationDegrees: Float = 0f,
-    val cropRatio: Float? = null,
+    val crop: CropRect? = null,
     val filter: String = "Original",
 )
 
@@ -41,6 +46,9 @@ object MediaOperations {
 
     fun permanentlyDelete(context: Context, item: MediaItem): Int =
         context.contentResolver.delete(item.uri, null, null)
+
+    fun permanentlyDeleteUri(context: Context, uri: Uri): Int =
+        context.contentResolver.delete(uri, null, null)
 
     fun copyToAlbum(context: Context, item: MediaItem, album: String): Uri? {
         val folder = album.trim().replace(Regex("[/\\\\]+"), "_").ifBlank { "FastGallery" }
@@ -125,20 +133,15 @@ object MediaOperations {
                 }
             }
 
-            edit.cropRatio?.let { ratio ->
-                if (ratio > 0f && bitmap.width > 0 && bitmap.height > 0) {
-                    val currentRatio = bitmap.width.toFloat() / bitmap.height
-                    val width = if (currentRatio > ratio) (bitmap.height * ratio).toInt() else bitmap.width
-                    val height = if (currentRatio > ratio) bitmap.height else (bitmap.width / ratio).toInt()
-                    val x = (bitmap.width - width) / 2
-                    val y = (bitmap.height - height) / 2
-                    val cropped = Bitmap.createBitmap(
-                        bitmap,
-                        x,
-                        y,
-                        width.coerceIn(1, bitmap.width),
-                        height.coerceIn(1, bitmap.height),
-                    )
+            edit.crop?.let { c ->
+                val w = bitmap.width
+                val h = bitmap.height
+                val x = (c.left.coerceIn(0f, 1f) * w).roundToInt().coerceIn(0, w - 1)
+                val y = (c.top.coerceIn(0f, 1f) * h).roundToInt().coerceIn(0, h - 1)
+                val cw = ((c.right - c.left).coerceIn(0f, 1f) * w).roundToInt().coerceIn(1, w - x)
+                val ch = ((c.bottom - c.top).coerceIn(0f, 1f) * h).roundToInt().coerceIn(1, h - y)
+                if (x != 0 || y != 0 || cw != w || ch != h) {
+                    val cropped = Bitmap.createBitmap(bitmap, x, y, cw, ch)
                     if (cropped !== bitmap) {
                         bitmap.recycle()
                         bitmap = cropped
@@ -238,19 +241,36 @@ object MediaOperations {
             0 to false
         }
 
-    private fun applyFilter(source: Bitmap, filter: String): Bitmap {
-        val matrix = when (filter) {
-            "Mono" -> ColorMatrix().apply { setSaturation(0f) }
-            "Warm" -> ColorMatrix(floatArrayOf(
-                1.12f, 0f, 0f, 0f, 12f, 0f, 1.02f, 0f, 0f, 3f,
-                0f, 0f, 0.88f, 0f, 0f, 0f, 0f, 0f, 1f, 0f,
-            ))
-            "Cool" -> ColorMatrix(floatArrayOf(
-                0.92f, 0f, 0f, 0f, 0f, 0f, 1.02f, 0f, 0f, 0f,
-                0f, 0f, 1.12f, 0f, 12f, 0f, 0f, 0f, 1f, 0f,
-            ))
-            else -> ColorMatrix()
+    /** 4x5 colour matrix for a filter id, or null for "Original". Shared by the edit preview and the saved copy. */
+    fun filterMatrix(filter: String): FloatArray? = when (filter) {
+        "Mono" -> ColorMatrix().apply { setSaturation(0f) }.array
+        "Warm" -> floatArrayOf(
+            1.12f, 0f, 0f, 0f, 12f, 0f, 1.02f, 0f, 0f, 3f,
+            0f, 0f, 0.88f, 0f, 0f, 0f, 0f, 0f, 1f, 0f,
+        )
+        "Cool" -> floatArrayOf(
+            0.92f, 0f, 0f, 0f, 0f, 0f, 1.02f, 0f, 0f, 0f,
+            0f, 0f, 1.12f, 0f, 12f, 0f, 0f, 0f, 1f, 0f,
+        )
+        else -> null
+    }
+
+    /** Small, EXIF-oriented bitmap for the edit preview (about 1.5 MP). */
+    fun loadEditPreview(context: Context, uri: Uri): Bitmap? {
+        val decoded = decodeBoundedBitmap(context, uri, 1_500_000L) ?: return null
+        val (exifRotation, exifFlipped) = readExifTransform(context, uri)
+        if (exifRotation == 0 && !exifFlipped) return decoded
+        val matrix = Matrix().apply {
+            if (exifRotation != 0) postRotate(exifRotation.toFloat())
+            if (exifFlipped) postScale(-1f, 1f)
         }
+        val oriented = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+        if (oriented !== decoded) decoded.recycle()
+        return oriented
+    }
+
+    private fun applyFilter(source: Bitmap, filter: String): Bitmap {
+        val matrix = filterMatrix(filter)?.let { ColorMatrix(it) } ?: ColorMatrix()
         return Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888).also { output ->
             Canvas(output).drawBitmap(source, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 colorFilter = ColorMatrixColorFilter(matrix)
@@ -260,29 +280,30 @@ object MediaOperations {
 
     fun exifDetails(context: Context, item: MediaItem): List<Pair<String, String>> {
         val details = mutableListOf(
-            "Name" to item.name,
-            "Type" to item.mime,
-            "Album" to item.bucketName,
-            "Size" to formatBytes(item.sizeBytes),
-            "Dimensions" to if (item.width > 0 && item.height > 0) "${item.width} × ${item.height}" else "Unknown",
-            "Date added" to java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.dateAdded * 1000)),
-            "Duration" to if (item.isVideo) formatMediaDuration(item.durationMs) else "",
+            context.getString(R.string.exif_name) to item.name,
+            context.getString(R.string.exif_type) to item.mime,
+            context.getString(R.string.exif_album) to item.bucketName,
+            context.getString(R.string.exif_size) to formatBytes(item.sizeBytes),
+            context.getString(R.string.exif_dimensions) to
+                if (item.width > 0 && item.height > 0) "${item.width} × ${item.height}" else context.getString(R.string.unknown),
+            context.getString(R.string.exif_date_added) to java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.dateAdded * 1000)),
+            context.getString(R.string.exif_duration) to if (item.isVideo) formatMediaDuration(item.durationMs) else "",
         )
         if (!item.isVideo) {
             try {
                 context.contentResolver.openInputStream(item.uri)?.use { input ->
                     val exif = ExifInterface(input)
                     listOf(
-                        ExifInterface.TAG_DATETIME_ORIGINAL to "Captured",
-                        ExifInterface.TAG_MAKE to "Camera make",
-                        ExifInterface.TAG_MODEL to "Camera model",
-                        ExifInterface.TAG_F_NUMBER to "Aperture",
-                        ExifInterface.TAG_EXPOSURE_TIME to "Exposure",
-                        ExifInterface.TAG_ISO_SPEED to "ISO",
-                        ExifInterface.TAG_FOCAL_LENGTH to "Focal length",
-                        ExifInterface.TAG_LENS_MODEL to "Lens",
-                        ExifInterface.TAG_GPS_LATITUDE to "GPS latitude",
-                        ExifInterface.TAG_GPS_LONGITUDE to "GPS longitude",
+                        ExifInterface.TAG_DATETIME_ORIGINAL to context.getString(R.string.exif_captured),
+                        ExifInterface.TAG_MAKE to context.getString(R.string.exif_camera_make),
+                        ExifInterface.TAG_MODEL to context.getString(R.string.exif_camera_model),
+                        ExifInterface.TAG_F_NUMBER to context.getString(R.string.exif_aperture),
+                        ExifInterface.TAG_EXPOSURE_TIME to context.getString(R.string.exif_exposure),
+                        ExifInterface.TAG_ISO_SPEED to context.getString(R.string.exif_iso),
+                        ExifInterface.TAG_FOCAL_LENGTH to context.getString(R.string.exif_focal_length),
+                        ExifInterface.TAG_LENS_MODEL to context.getString(R.string.exif_lens),
+                        ExifInterface.TAG_GPS_LATITUDE to context.getString(R.string.exif_gps_latitude),
+                        ExifInterface.TAG_GPS_LONGITUDE to context.getString(R.string.exif_gps_longitude),
                     ).forEach { (tag, label) -> exif.getAttribute(tag)?.takeIf(String::isNotBlank)?.let { details += label to it } }
                 }
             } catch (_: Exception) { }

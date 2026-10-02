@@ -1,0 +1,4 @@
+# Starter profile: app ka poora code hot/startup/post-startup mark (generate chalane tak kaam chalata hai).
+# Asli, measured profile ke liye: ./gradlew :app:generateBaselineProfile (baselineprofile module).
+HSPLcom/fastgallery/app/**;->**(**)**
+Lcom/fastgallery/app/**;

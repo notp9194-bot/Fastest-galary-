@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "FastGallery"
 include(":app")
+include(":baselineprofile")

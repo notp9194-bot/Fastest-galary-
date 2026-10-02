@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.4
+# Fast Gallery 1.4.6
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -9,14 +9,14 @@ Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26
 - Search, media-type filters (photos, videos, GIF and RAW), sort by date/name/size, grid column pinch zoom, and fast scroll handle.
 - Long-press multi-select with bulk share, favorites and trash actions.
 - Rename, copy to another album/folder, or move (copy followed by Android's delete approval).
-- Local Trash with restore, favorite collection, album hide, and device-authenticated album lock.
-- Rotate, center crop (free/square/4:3) and Original/Mono/Warm/Cool filters. Edits are saved as a new JPEG; the source is preserved.
+- Trash with restore (30-day auto-delete), favorite collection, album hide, and device-authenticated album lock.
+- Full-screen edit screen with live preview: rotate 90°, drag-to-crop (free, 1:1, 4:3, 3:4, 16:9 with movable corners/edges) and Original/Mono/Warm/Cool filters. Edits are saved as a new JPEG; the source is preserved.
 - Set an image as wallpaper and choose System/Light/Dark appearance.
 
 ## Important behavior
 
 - Android asks for confirmation before deleting or editing media when required by its storage permissions.
-- Trash is an app-local reversible list; the original media remains in shared storage until permanently deleted.
+- Trash: Android 11+ uses the real system trash (`MediaStore.createTrashRequest`); files are removed from other apps too and Android deletes them after 30 days. Android 8-10 has no system trash, so Fast Gallery keeps an app-level flag and permanently deletes items after 30 days (best effort).
 - Hide removes an album's items from normal gallery views. Lock gates opening the album with device authentication; it does not encrypt the files or hide them from other apps.
 - RAW display depends on Android's media provider having a preview for that camera format. Editing RAW files is not supported; edits create JPEG copies.
 - Edit actions are non-destructive and create new files under `Pictures/FastGallery/Edited/`.
@@ -30,7 +30,54 @@ Open the `FastGallery` directory in Android Studio or use Gradle 8.9 with JDK 17
 gradle assembleDebug
 ```
 
-GitHub Actions builds debug and release APK artifacts when pushed to the configured branches/tags.
+GitHub Actions builds debug and release APK artifacts (plus a release AAB for Play Store) when pushed to the configured branches/tags.
+
+## Release signing (Play Store)
+
+Release build apni keystore se sign hota hai. Keystore na mile to local testing ke liye debug key use hoti hai (Gradle warning deta hai) - aisi APK/AAB Play Store pe upload mat karo.
+
+1. Keystore banao (ek baar; isse safe jagah backup karo - kho gayi to app update nahi kar paoge):
+   ```sh
+   keytool -genkeypair -v -keystore release.keystore -alias fastgallery \
+     -keyalg RSA -keysize 2048 -validity 10000
+   ```
+2. Local: `keystore.properties.example` ko `keystore.properties` me copy karke values bharo, phir `gradle assembleRelease` ya `gradle bundleRelease` (Play Store ke liye AAB). `keystore.properties` aur `*.keystore` git me ignore hain.
+3. GitHub Actions: repo Secrets me `ANDROID_KEYSTORE_BASE64` (`base64 -w0 release.keystore`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` daalo. `v*` tag build bina keystore secret ke fail hota hai.
+4. Note: debug key se pehle install ki hui APK ke upar apni keystore wali APK install nahi hogi (signature alag) - uninstall karke install karo.
+
+## Updates in 1.4.6
+
+- Fix (security): locked album ki photos/videos ab Photos, Favorites, Trash aur search me nahi dikhti. Locked album sirf authentication ke baad khulta hai, app background me jaane par dobara lock hota hai, aur Albums grid me locked album ka cover lock icon se badal gaya.
+- Fix: Trash ab asli hai. Android 11+ pe system trash (30 din baad auto-delete); purane Android pe flag + 30 din baad auto-delete. Hidden/locked album ki cheezein Trash me nahi dikhti. Purane app-local trash items ko Trash tab me "system Trash me move karein?" dialog se migrate kar sakte ho.
+- Version: `versionName` 1.4.6 / `versionCode` 12.
+- UI: top bar me Search, Sort aur Back ab icons hain (accessibility labels ke saath).
+
+- Security: `allowBackup=false` + `dataExtractionRules`/`fullBackupContent` (sab exclude) - hidden/locked albums, favorites aur trash ka prefs ab cloud backup ya device transfer me nahi jaata.
+- UI: viewer ka bottom bar ab icons hai (Favorite, Edit, Trash/Restore) aur baaki actions (Rename, Copy/move, Wallpaper, Details, Delete permanently) "More" menu me. Slideshow ka text button play/pause icon bana. Videos me Edit/Wallpaper nahi dikhte.
+- UI: multi-select me ab neeche action bar hai (Share, Favorite, Trash/Restore, Delete - icon + label) aur top bar me "Select all" icon (dobara dabane par deselect). Favorite ab smart hai: sab pehle se favorite hon to hata deta hai, warna baaki sab add karta hai (pehle har item ulta ho jaata tha). Count title me string resource se aata hai.
+- Release: apni keystore se signing (`keystore.properties` / CI secrets), debug-key sirf fallback. CI ab release AAB bhi banata hai.
+
+- UI: loading ab spinner ki jagah skeleton grid (halka pulse) dikhata hai. Empty screens (Photos, Albums, Favorites, Trash, search/filter no-result) me icon badge + title + hint hai; "Trash is empty" aur "No favorites yet" ab alag-alag guide karte hain.
+- i18n: saare hardcoded UI strings (English + Hinglish mix) `res/values/strings.xml` me aa gaye: permission screen, settings, hidden/locked albums, sort/filter, viewer dialogs, edit dialog, details (EXIF) labels, toasts, biometric prompt, nav labels. Ab default sab English hai; Hindi ke liye `res/values-hi/strings.xml` add karna kaafi hai.
+
+- UI: video ka apna player UI. Default ExoPlayer controller hata diya; ab Compose controls hain: center play/pause, seek bar (current / total time ke saath, drag chhodne par seek), mute/unmute icon aur playback speed menu (0.5x - 2x). Controls viewer ke bars ke saath tap se dikhte/chhupte hain aur video chalte waqt 3 sec baad auto-hide. Dusre page pe jaane ya app background me jaane par video pause; chalte waqt screen on rehti hai. Saare labels `strings.xml` me.
+
+- UI: Android 14+ pe jab user "Selected photos and videos" access deta hai, neeche ek dismissible banner dikhta hai ("Manage access" button system ka photo-access dialog dobara kholta hai - aur media chunne ya full access dene ke liye). Full access milne par banner khud gayab; settings se wapas aane par bhi state refresh hoti hai.
+
+Build aur device checks is source update ke liye chalaye nahi gaye.
+
+## Updates in 1.4.5
+
+- Fix: filter / sort / search lagane par grid purana (ya khaali) result dikhata tha jab tak tab switch na karo. Wajah: `MediaGrid` ke entries `remember(itemsVersion)` pe cached the, jo sirf MediaStore load pe badalta tha. Ab `GalleryDisplayResult.version` (har derived result pe naya) key hai, aur query badalne par grid top pe scroll hota hai.
+- Fix: `loadAll()` ab `loadingMore`/`hasMore` badalne par bhi dobara try hota hai, isliye scroll-paging ke dauran filter lagane par load atakta nahi.
+- Baseline Profile: `:baselineprofile` module (generator + startup benchmark), `profileinstaller`, `<profileable>`, aur starter `app/src/main/baseline-prof.txt`.
+  - Real profile generate karo (API 28+ device/emulator, gallery me media ke saath): `./gradlew :app:generateBaselineProfile`, phir `app/src/main/generated/baselineProfiles/` commit karo.
+  - Compare: `./gradlew :baselineprofile:connectedBenchmarkAndroidTest` (StartupBenchmarks: profile ke bina vs saath).
+
+- UI: loading ab spinner ki jagah skeleton grid (halka pulse) dikhata hai. Empty screens (Photos, Albums, Favorites, Trash, search/filter no-result) me icon badge + title + hint hai; "Trash is empty" aur "No favorites yet" ab alag-alag guide karte hain.
+- i18n: saare hardcoded UI strings (English + Hinglish mix) `res/values/strings.xml` me aa gaye: permission screen, settings, hidden/locked albums, sort/filter, viewer dialogs, edit dialog, details (EXIF) labels, toasts, biometric prompt, nav labels. Ab default sab English hai; Hindi ke liye `res/values-hi/strings.xml` add karna kaafi hai.
+
+Build aur device checks is source update ke liye chalaye nahi gaye.
 
 ## Startup / first-open speed updates in 1.4.4
 

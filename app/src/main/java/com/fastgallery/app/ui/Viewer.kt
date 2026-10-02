@@ -8,7 +8,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,20 +18,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
@@ -45,6 +48,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
+import com.fastgallery.app.R
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -101,6 +106,7 @@ fun Viewer(
     var renameText by remember { mutableStateOf("") }
     var folderText by remember { mutableStateOf("") }
     var moveAfterCopy by remember { mutableStateOf(false) }
+    var moreMenu by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         val window = ctx.findActivity()?.window
@@ -131,6 +137,8 @@ fun Viewer(
                 item = items[page],
                 isCurrent = page == pager.currentPage,
                 onTap = { chrome = !chrome },
+                chrome = chrome,
+                onHideChrome = { chrome = false },
                 onDismiss = onClose,
             )
         }
@@ -142,7 +150,7 @@ fun Viewer(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onClose) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back), tint = Color.White)
                 }
                 Text(
                     current?.name ?: "",
@@ -151,42 +159,88 @@ fun Viewer(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = { slideshow = !slideshow }) {
-                    Text(if (slideshow) "Pause" else "Slide", color = Color.White)
+                IconButton(onClick = { slideshow = !slideshow }) {
+                    Icon(
+                        if (slideshow) PauseIcon else Icons.Filled.PlayArrow,
+                        stringResource(if (slideshow) R.string.action_slideshow_stop else R.string.action_slideshow_start),
+                        tint = Color.White,
+                    )
                 }
                 IconButton(onClick = { current?.let { shareItem(ctx, it) } }) {
-                    Icon(Icons.Filled.Share, "Share", tint = Color.White)
+                    Icon(Icons.Filled.Share, stringResource(R.string.action_share), tint = Color.White)
                 }
             }
         }
         AnimatedVisibility(chrome, modifier = Modifier.align(Alignment.BottomCenter)) {
             Row(
+                // Videos me player ke controls (seek bar etc.) is bar ke upar aate hain.
                 Modifier.fillMaxWidth()
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f))))
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 12.dp)
+                    .padding(horizontal = 8.dp, vertical = 8.dp)
                     .navigationBarsPadding(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 current?.let { item ->
-                    ControlButton(if (item.key in favoriteKeys) "★ Saved" else "☆ Favorite") { onFavorite(item) }
-                    ControlButton(if (item.key in trashedKeys) "Restore" else "Trash") {
-                        onSetTrashed(item, item.key !in trashedKeys)
+                    val isFavorite = item.key in favoriteKeys
+                    val isTrashed = item.key in trashedKeys
+                    IconButton(onClick = { onFavorite(item) }) {
+                        Icon(
+                            if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                            stringResource(if (isFavorite) R.string.action_favorite_remove else R.string.action_favorite_add),
+                            tint = if (isFavorite) Color(0xFFFF6B81) else Color.White,
+                        )
                     }
-                    ControlButton("Delete") { onDelete(item) }
-                    ControlButton("Rename") {
-                        renameText = item.name
-                        renameTarget = item
+                    if (!item.isVideo) {
+                        IconButton(onClick = { editTarget = item }) {
+                            Icon(Icons.Filled.Edit, stringResource(R.string.action_edit), tint = Color.White)
+                        }
                     }
-                    ControlButton("Copy / move") {
-                        folderText = item.bucketName
-                        moveAfterCopy = false
-                        copyTarget = item
+                    IconButton(onClick = { onSetTrashed(item, !isTrashed) }) {
+                        Icon(
+                            if (isTrashed) Icons.Filled.Refresh else Icons.Filled.Delete,
+                            stringResource(if (isTrashed) R.string.action_restore else R.string.action_trash),
+                            tint = Color.White,
+                        )
                     }
-                    ControlButton("Edit") { if (!item.isVideo) editTarget = item }
-                    ControlButton("Details") { details = item }
-                    ControlButton("Wallpaper") { if (!item.isVideo) onWallpaper(item) }
+                    Box {
+                        IconButton(onClick = { moreMenu = true }) {
+                            Icon(Icons.Filled.MoreVert, stringResource(R.string.action_more), tint = Color.White)
+                        }
+                        DropdownMenu(expanded = moreMenu, onDismissRequest = { moreMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.action_rename)) },
+                                onClick = {
+                                    moreMenu = false
+                                    renameText = item.name
+                                    renameTarget = item
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.action_copy_move)) },
+                                onClick = {
+                                    moreMenu = false
+                                    folderText = item.bucketName
+                                    moveAfterCopy = false
+                                    copyTarget = item
+                                },
+                            )
+                            if (!item.isVideo) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_wallpaper)) },
+                                    onClick = { moreMenu = false; onWallpaper(item) },
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.action_details)) },
+                                onClick = { moreMenu = false; details = item },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.action_delete_permanently)) },
+                                onClick = { moreMenu = false; onDelete(item) },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -196,7 +250,7 @@ fun Viewer(
         val rows = remember(item.key) { MediaOperations.exifDetails(ctx, item) }
         AlertDialog(
             onDismissRequest = { details = null },
-            title = { Text("Photo details") },
+            title = { Text(stringResource(R.string.details_title)) },
             text = {
                 Column(Modifier.fillMaxWidth()) {
                     rows.forEach { (label, value) ->
@@ -204,87 +258,48 @@ fun Viewer(
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { details = null }) { Text("Close") } },
+            confirmButton = { TextButton(onClick = { details = null }) { Text(stringResource(R.string.action_close)) } },
         )
     }
     renameTarget?.let { item ->
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("Rename media") },
+            title = { Text(stringResource(R.string.rename_title)) },
             text = {
                 OutlinedTextField(
                     value = renameText, onValueChange = { renameText = it },
-                    label = { Text("File name") }, singleLine = true,
+                    label = { Text(stringResource(R.string.rename_file_name)) }, singleLine = true,
                 )
             },
             confirmButton = {
-                TextButton(onClick = { onRename(item, renameText); renameTarget = null }) { Text("Rename") }
+                TextButton(onClick = { onRename(item, renameText); renameTarget = null }) { Text(stringResource(R.string.rename_confirm)) }
             },
-            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
     copyTarget?.let { item ->
         AlertDialog(
             onDismissRequest = { copyTarget = null },
-            title = { Text("Copy or move to album") },
+            title = { Text(stringResource(R.string.copy_title)) },
             text = {
                 Column {
-                    OutlinedTextField(value = folderText, onValueChange = { folderText = it }, label = { Text("Album / folder name") })
+                    OutlinedTextField(value = folderText, onValueChange = { folderText = it }, label = { Text(stringResource(R.string.copy_folder_name)) })
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Delete original after copy")
+                        Text(stringResource(R.string.copy_delete_original))
                         Switch(checked = moveAfterCopy, onCheckedChange = { moveAfterCopy = it })
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { onCopyOrMove(item, folderText, moveAfterCopy); copyTarget = null }) { Text("Continue") }
+                TextButton(onClick = { onCopyOrMove(item, folderText, moveAfterCopy); copyTarget = null }) { Text(stringResource(R.string.action_continue)) }
             },
-            dismissButton = { TextButton(onClick = { copyTarget = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { copyTarget = null }) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
-    editTarget?.let { item -> EditDialog(item.name, onDismiss = { editTarget = null }) { edit ->
+    editTarget?.let { item -> EditDialog(item, onDismiss = { editTarget = null }) { edit ->
         onEdit(item, edit)
         editTarget = null
     } }
-}
-
-@Composable
-private fun ControlButton(label: String, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick) { Text(label, color = Color.White, maxLines = 1) }
-}
-
-@Composable
-private fun EditDialog(name: String, onDismiss: () -> Unit, onSave: (ImageEdit) -> Unit) {
-    var rotation by remember { mutableFloatStateOf(0f) }
-    var crop by remember { mutableStateOf<Float?>(null) }
-    var filter by remember { mutableStateOf("Original") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Edit · $name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Rotate: ${rotation.toInt()}°")
-                Slider(value = rotation, onValueChange = { rotation = (it / 90f).toInt() * 90f }, valueRange = 0f..270f, steps = 2)
-                Text("Crop")
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("Free" to null, "Square" to 1f, "4:3" to (4f / 3f)).forEach { (label, ratio) ->
-                        if (crop == ratio) Button(onClick = { crop = ratio }) { Text(label) }
-                        else OutlinedButton(onClick = { crop = ratio }) { Text(label) }
-                    }
-                }
-                Text("Filter")
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("Original", "Mono", "Warm", "Cool").forEach { option ->
-                        if (filter == option) Button(onClick = { filter = option }) { Text(option) }
-                        else OutlinedButton(onClick = { filter = option }) { Text(option) }
-                    }
-                }
-                Text("Saves a new edited copy; the original stays unchanged.", style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = { TextButton(onClick = { onSave(ImageEdit(rotation, crop, filter)) }) { Text("Save copy") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -293,6 +308,8 @@ private fun ViewerPage(
     item: MediaItem,
     isCurrent: Boolean,
     onTap: () -> Unit,
+    chrome: Boolean,
+    onHideChrome: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var scale by remember(item.key) { mutableFloatStateOf(1f) }
@@ -346,7 +363,7 @@ private fun ViewerPage(
         alpha = 1f - (abs(dismissOffset) / height).coerceIn(0f, 0.65f)
     }) {
         if (item.isVideo) {
-            VideoPlayer(item)
+            VideoPlayer(item, isCurrent = isCurrent, controlsVisible = chrome, onHideControls = onHideChrome)
         } else {
             AsyncImage(
                 model = rememberImageRequest(item.uri, decodeSize),
@@ -359,7 +376,7 @@ private fun ViewerPage(
             )
             if (item.isRaw()) {
                 Text(
-                    "RAW",
+                    stringResource(R.string.badge_raw),
                     color = Color.White,
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp)

@@ -3,7 +3,9 @@ package com.fastgallery.app.ui
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.FlingBehavior
 import androidx.compose.foundation.gestures.ScrollScope
@@ -25,6 +27,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -49,6 +53,14 @@ import kotlin.math.roundToInt
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -57,6 +69,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
@@ -65,8 +79,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.fastgallery.app.R
 import com.fastgallery.app.data.Album
 import com.fastgallery.app.data.GridEntry
 import com.fastgallery.app.data.MediaItem
@@ -116,13 +132,14 @@ fun MediaGrid(
     selected: Set<String>,
     columns: Int,
     flingFriction: Float = 0.015f,
-    itemsVersion: Long,
+    contentVersion: Long,
+    resetKey: Any = Unit,
     onOpen: (Int) -> Unit,
     onToggleSelection: (MediaItem) -> Unit,
     onPinchColumns: (Int) -> Unit,
     onLoadMore: () -> Unit,
 ) {
-    val entries = remember(itemsVersion) { com.fastgallery.app.data.buildEntries(items) }
+    val entries = remember(contentVersion) { com.fastgallery.app.data.buildEntries(items) }
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     val currentColumns by rememberUpdatedState(columns)
@@ -135,6 +152,8 @@ fun MediaGrid(
         val cols = if (columns == 0) maxOf(1, screenWidthDp / 112) else columns.coerceIn(2, 8)
         ((screenWidthDp - 2f * (cols - 1)) / cols * density.density).toInt().coerceIn(64, 1024)
     }
+    // Filter/sort/search badalne par naye result top se dikhao.
+    LaunchedEffect(resetKey) { gridState.scrollToItem(0) }
     LaunchedEffect(gridState, items.size) {
         snapshotFlow {
             gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
@@ -236,11 +255,17 @@ fun MediaGrid(
 }
 
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AlbumsGrid(
     albums: List<Album>,
     padding: PaddingValues,
+    locked: Set<String>,
+    pinned: Set<String>,
     onOpen: (Album) -> Unit,
+    onHide: (Album) -> Unit,
+    onToggleLock: (Album) -> Unit,
+    onTogglePin: (Album) -> Unit,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
@@ -255,43 +280,117 @@ fun AlbumsGrid(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         items(albums, key = { it.id }) { album ->
-            Column(Modifier.clickable { onOpen(album) }) {
-                BoxWithConstraints(
-                    Modifier
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(16.dp)),
+            var menuOpen by remember { mutableStateOf(false) }
+            val isLocked = album.id.toString() in locked
+            val isPinned = album.id.toString() in pinned
+            Box {
+                Column(
+                    Modifier.combinedClickable(
+                        onClick = { onOpen(album) },
+                        onLongClick = { menuOpen = true },
+                    ),
                 ) {
-                    val coverSizePx = with(LocalDensity.current) {
-                        maxWidth.roundToPx().coerceIn(1, 1024)
+                    BoxWithConstraints(
+                        Modifier
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(16.dp)),
+                    ) {
+                        val coverSizePx = with(LocalDensity.current) {
+                            maxWidth.roundToPx().coerceIn(1, 1024)
+                        }
+                        if (isLocked) {
+                            // Locked album ka cover authentication se pehle nahi dikhna chahiye.
+                            Box(
+                                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                androidx.compose.material3.Icon(
+                                    androidx.compose.material.icons.Icons.Filled.Lock,
+                                    contentDescription = stringResource(R.string.album_locked),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(40.dp),
+                                )
+                            }
+                        } else AsyncImage(
+                            model = rememberThumbRequest(album.cover.uri, coverSizePx),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        if (isPinned) {
+                            androidx.compose.material3.Icon(
+                                PinIcon,
+                                contentDescription = stringResource(R.string.album_pinned),
+                                tint = Color.White,
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(8.dp)
+                                    .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                                    .padding(5.dp)
+                                    .size(16.dp),
+                            )
+                        }
                     }
-                    AsyncImage(
-                        model = rememberThumbRequest(album.cover.uri, coverSizePx),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
+                    Text(
+                        album.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    Text(
+                        if (isLocked) stringResource(R.string.album_count_locked, album.count) else "${album.count}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Text(
-                    album.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-                Text(
-                    "${album.count}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(if (isPinned) R.string.album_unpin else R.string.album_pin)) },
+                        onClick = { menuOpen = false; onTogglePin(album) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.album_hide)) },
+                        onClick = { menuOpen = false; onHide(album) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(if (isLocked) R.string.album_remove_lock else R.string.album_lock)) },
+                        onClick = { menuOpen = false; onToggleLock(album) },
+                    )
+                }
             }
         }
     }
 }
 
+/** Android 14 "Selected photos only" mode ke liye floating banner: baaki media ka access manage karne ka shortcut. */
 @Composable
-fun CenterMessage(text: String, padding: PaddingValues) {
-    Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-        Text(text, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+fun PartialAccessBanner(onManage: () -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    androidx.compose.material3.Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        tonalElevation = 3.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Row(
+            Modifier.padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.partial_access_message),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onManage) { Text(stringResource(R.string.partial_access_manage)) }
+            androidx.compose.material3.IconButton(onClick = onDismiss) {
+                androidx.compose.material3.Icon(
+                    androidx.compose.material.icons.Icons.Filled.Close,
+                    stringResource(R.string.partial_access_dismiss),
+                )
+            }
+        }
     }
 }
 
@@ -304,11 +403,11 @@ fun PermissionScreen(padding: PaddingValues, onAllow: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            "Photos aur videos dikhane ke liye access chahiye",
+            stringResource(R.string.permission_title),
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
         )
-        Button(onClick = onAllow, modifier = Modifier.padding(top = 20.dp)) { Text("Allow access") }
+        Button(onClick = onAllow, modifier = Modifier.padding(top = 20.dp)) { Text(stringResource(R.string.permission_allow)) }
         OutlinedButton(
             onClick = {
                 ctx.startActivity(
@@ -316,7 +415,7 @@ fun PermissionScreen(padding: PaddingValues, onAllow: () -> Unit) {
                 )
             },
             modifier = Modifier.padding(top = 8.dp),
-        ) { Text("Open settings") }
+        ) { Text(stringResource(R.string.permission_open_settings)) }
     }
 }
 
@@ -325,13 +424,12 @@ fun SettingsScreen(
     padding: PaddingValues,
     theme: String,
     columns: Int,
-    albums: List<Album>,
-    hidden: Set<String>,
-    locked: Set<String>,
+    hiddenCount: Int,
+    lockedCount: Int,
     onTheme: (String) -> Unit,
     onColumns: (Int) -> Unit,
-    onHidden: (Long, Boolean) -> Unit,
-    onLocked: (Long, Boolean) -> Unit,
+    onOpenHidden: () -> Unit,
+    onOpenLocked: () -> Unit,
 ) {
     androidx.compose.foundation.lazy.LazyColumn(
         Modifier.fillMaxSize(),
@@ -343,9 +441,14 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text("Appearance", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_appearance), style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                listOf("system" to "System", "light" to "Light", "dark" to "Dark").forEach { (value, label) ->
+                listOf(
+                    "system" to R.string.theme_system,
+                    "light" to R.string.theme_light,
+                    "dark" to R.string.theme_dark,
+                ).forEach { (value, labelRes) ->
+                    val label = stringResource(labelRes)
                     if (theme == value) Button(onClick = { onTheme(value) }) { Text(label) }
                     else OutlinedButton(onClick = { onTheme(value) }) { Text(label) }
                 }
@@ -353,31 +456,175 @@ fun SettingsScreen(
         }
         item {
             Divider()
-            Text("Grid columns: ${columns.coerceAtLeast(2)}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+            Text(stringResource(R.string.settings_grid_columns, columns.coerceAtLeast(2)), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
             Slider(
                 value = columns.coerceIn(2, 8).toFloat(),
                 onValueChange = { onColumns(it.toInt().coerceIn(2, 8)) },
                 valueRange = 2f..8f,
                 steps = 5,
             )
-            Text("Pinch the grid to change columns quickly.", style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.settings_pinch_hint), style = MaterialTheme.typography.bodySmall)
         }
         item {
             Divider()
-            Text("Albums · hide or lock", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
-            Text("Hidden albums disappear from the Albums tab. Locked albums ask for device authentication when opened.", style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.settings_private_albums), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+            Text(
+                stringResource(R.string.settings_private_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        items(albums, key = { "settings_${it.id}" }) { album ->
-            Column {
-                Text(album.name, style = MaterialTheme.typography.titleSmall)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("Hide", style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.weight(1f))
-                    Switch(checked = album.id.toString() in hidden, onCheckedChange = { onHidden(album.id, it) })
-                    Text("Lock", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 12.dp))
-                    Switch(checked = album.id.toString() in locked, onCheckedChange = { onLocked(album.id, it) })
-                }
+        item { SummaryRow(stringResource(R.string.hidden_albums), hiddenCount, onOpenHidden) }
+        item { SummaryRow(stringResource(R.string.locked_albums), lockedCount, onOpenLocked) }
+    }
+}
+
+@Composable
+private fun SummaryRow(label: String, count: Int, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.weight(1f))
+        Text(
+            "$count  ›",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Manage screen for hidden (locked = false) or locked (locked = true) albums.
+ * Lists only albums currently in that state; "Add album" opens a searchable picker.
+ */
+@Composable
+fun ManagedAlbumsScreen(
+    padding: PaddingValues,
+    locked: Boolean,
+    albums: List<Album>,
+    ids: Set<String>,
+    onRemove: (Long) -> Unit,
+    onAdd: (Long) -> Unit,
+) {
+    val removeLabel = stringResource(if (locked) R.string.managed_unlock else R.string.managed_unhide)
+    val byId = remember(albums) { albums.associateBy { it.id.toString() } }
+    val managed = remember(ids, byId) {
+        ids.sortedWith(compareBy({ byId[it] == null }, { byId[it]?.name?.lowercase() ?: it }))
+    }
+    var picker by remember { mutableStateOf(false) }
+    androidx.compose.foundation.lazy.LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 20.dp, end = 20.dp,
+            top = padding.calculateTopPadding() + 12.dp,
+            bottom = padding.calculateBottomPadding() + 20.dp,
+        ),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        item {
+            Text(
+                stringResource(if (locked) R.string.managed_locked_desc else R.string.managed_hidden_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(onClick = { picker = true }, modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)) {
+                Text(stringResource(R.string.managed_add_album))
             }
         }
+        if (managed.isEmpty()) {
+            item {
+                Text(
+                    stringResource(if (locked) R.string.managed_none_locked else R.string.managed_none_hidden),
+                    modifier = Modifier.padding(vertical = 24.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        items(managed, key = { "managed_$it" }) { id ->
+            val album = byId[id]
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        album?.name ?: stringResource(R.string.managed_unavailable),
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (album != null) {
+                        Text(
+                            "${album.count}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                id.toLongOrNull()?.let { longId ->
+                    TextButton(onClick = { onRemove(longId) }) { Text(removeLabel) }
+                }
+            }
+            Divider()
+        }
+    }
+    if (picker) {
+        var query by remember { mutableStateOf("") }
+        val candidates = remember(albums, ids, query) {
+            albums.filter { it.id.toString() !in ids && (query.isBlank() || it.name.contains(query, true)) }
+                .sortedBy { it.name.lowercase() }
+        }
+        AlertDialog(
+            onDismissRequest = { picker = false },
+            title = { Text(stringResource(if (locked) R.string.managed_pick_lock_title else R.string.managed_pick_hide_title)) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        placeholder = { Text(stringResource(R.string.managed_search_albums)) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (candidates.isEmpty()) {
+                        Text(
+                            stringResource(R.string.managed_no_albums_found),
+                            modifier = Modifier.padding(top = 16.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        androidx.compose.foundation.lazy.LazyColumn(
+                            Modifier.fillMaxWidth().heightIn(max = 320.dp).padding(top = 8.dp),
+                        ) {
+                            items(candidates, key = { "pick_${it.id}" }) { album ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onAdd(album.id); picker = false }
+                                        .padding(vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        album.name,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        "${album.count}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { picker = false }) { Text(stringResource(R.string.action_cancel)) } },
+        )
     }
 }

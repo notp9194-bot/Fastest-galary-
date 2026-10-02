@@ -25,9 +25,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -59,6 +66,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -68,17 +78,27 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.fastgallery.app.data.AlbumSort
 import com.fastgallery.app.data.GalleryPreferences
+import com.fastgallery.app.ui.SelectAllIcon
+import com.fastgallery.app.ui.SelectionActionBar
 import com.fastgallery.app.data.GallerySort
 import com.fastgallery.app.data.MediaFilter
 import com.fastgallery.app.data.MediaItem
 import com.fastgallery.app.data.MediaOperations
+import com.fastgallery.app.data.sortAlbums
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import com.fastgallery.app.ui.AlbumsGrid
-import com.fastgallery.app.ui.CenterMessage
+import com.fastgallery.app.ui.EmptyState
+import com.fastgallery.app.ui.SkeletonGrid
 import com.fastgallery.app.ui.GalleryTheme
+import com.fastgallery.app.ui.ManagedAlbumsScreen
 import com.fastgallery.app.ui.MediaGrid
+import com.fastgallery.app.ui.PartialAccessBanner
 import com.fastgallery.app.ui.PermissionScreen
 import com.fastgallery.app.ui.SettingsScreen
+import com.fastgallery.app.ui.SortIcon
 import com.fastgallery.app.ui.Viewer
 import com.fastgallery.app.ui.shareItems
 import kotlinx.coroutines.Dispatchers
@@ -109,12 +129,19 @@ fun GalleryRoot(vm: GalleryViewModel = viewModel()) {
     }
 }
 
-private fun authenticateAlbum(activity: Activity?, onSuccess: () -> Unit, onFailure: () -> Unit) {
-    val host = activity as? FragmentActivity ?: run { onFailure(); return }
-    val authenticators = if (Build.VERSION.SDK_INT >= 30) {
+private fun albumAuthenticators(): Int =
+    if (Build.VERSION.SDK_INT >= 30) {
         BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL
     } else BiometricManager.Authenticators.BIOMETRIC_WEAK
-    if (BiometricManager.from(host).canAuthenticate(authenticators) != BiometricManager.BIOMETRIC_SUCCESS) {
+
+private fun canAuthenticateAlbum(activity: Activity?): Boolean {
+    val host = activity as? FragmentActivity ?: return false
+    return BiometricManager.from(host).canAuthenticate(albumAuthenticators()) == BiometricManager.BIOMETRIC_SUCCESS
+}
+
+private fun authenticateAlbum(activity: Activity?, onSuccess: () -> Unit, onFailure: () -> Unit) {
+    val host = activity as? FragmentActivity ?: run { onFailure(); return }
+    if (!canAuthenticateAlbum(host)) {
         onFailure()
         return
     }
@@ -123,9 +150,9 @@ private fun authenticateAlbum(activity: Activity?, onSuccess: () -> Unit, onFail
         override fun onAuthenticationError(errorCode: Int, errString: CharSequence) = onFailure()
     })
     val info = BiometricPrompt.PromptInfo.Builder()
-        .setTitle("Unlock private album")
-        .setSubtitle("Confirm your device identity")
-        .setAllowedAuthenticators(authenticators)
+        .setTitle(host.getString(R.string.auth_title))
+        .setSubtitle(host.getString(R.string.auth_subtitle))
+        .setAllowedAuthenticators(albumAuthenticators())
         .build()
     prompt.authenticate(info)
 }
@@ -144,8 +171,11 @@ private fun GalleryContent(
     )
     val scope = rememberCoroutineScope()
     var granted by remember { mutableStateOf(hasMediaAccess(ctx)) }
+    var partialAccess by remember { mutableStateOf(isPartialMediaAccess(ctx)) }
+    var partialBannerDismissed by rememberSaveable { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         granted = hasMediaAccess(ctx)
+        partialAccess = isPartialMediaAccess(ctx)
         if (granted) vm.load()
     }
     var asked by rememberSaveable { mutableStateOf(false) }
@@ -157,20 +187,44 @@ private fun GalleryContent(
     }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         granted = hasMediaAccess(ctx)
+        partialAccess = isPartialMediaAccess(ctx)
+        if (!partialAccess) partialBannerDismissed = false
         if (granted) vm.refreshIfNeeded()
+    }
+
+    // App background me jaaye to locked album dobara lock (rotation/theme recreate pe nahi).
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        if (ctx.findActivity()?.isChangingConfigurations != true) vm.relockAlbums()
     }
 
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var albumId by rememberSaveable { mutableStateOf<Long?>(null) }
     var viewerIndex by rememberSaveable { mutableIntStateOf(-1) }
+    // Settings sub-screens: 0 = main, 1 = hidden albums, 2 = locked albums
+    var settingsPage by rememberSaveable { mutableIntStateOf(0) }
+    var albumMenuOpen by remember { mutableStateOf(false) }
     var search by rememberSaveable { mutableStateOf("") }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var showFilters by remember { mutableStateOf(false) }
+    var showAlbumSort by remember { mutableStateOf(false) }
+    var albumSort by remember { mutableStateOf(GalleryPreferences.albumSort(ctx)) }
+    var pinnedAlbums by remember { mutableStateOf(GalleryPreferences.pinnedAlbums(ctx)) }
     var sort by rememberSaveable { mutableStateOf(GallerySort.DATE_NEWEST) }
     var filter by rememberSaveable { mutableStateOf(MediaFilter.ALL) }
     var columns by rememberSaveable { mutableIntStateOf(GalleryPreferences.columns(ctx)) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var approvalAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    // Locked album bina authentication ke kabhi khula na rahe (process restore / relock ke baad bhi).
+    val openAlbumLockedOut = albumId?.let { id ->
+        id.toString() in state.lockedAlbumIds && vm.unlockedAlbumId != id
+    } == true
+    LaunchedEffect(openAlbumLockedOut) {
+        if (openAlbumLockedOut) {
+            albumId = null
+            viewerIndex = -1
+            selected = emptySet()
+        }
+    }
     val activeQuery = GalleryQuery(
         tab = tab,
         albumId = albumId,
@@ -187,7 +241,7 @@ private fun GalleryContent(
         sort != GallerySort.DATE_NEWEST ||
         filter != MediaFilter.ALL
 
-    LaunchedEffect(activeQuery, state.itemsVersion) {
+    LaunchedEffect(activeQuery, state.itemsVersion, state.loadingMore, state.hasMore) {
         vm.setQuery(activeQuery)
         if (needsCompleteLibrary) vm.loadAll()
     }
@@ -196,7 +250,7 @@ private fun GalleryContent(
         val action = approvalAction
         approvalAction = null
         if (result.resultCode == Activity.RESULT_OK) action?.invoke()
-        else Toast.makeText(ctx, "Android did not approve this media change.", Toast.LENGTH_SHORT).show()
+        else Toast.makeText(ctx, ctx.getString(R.string.msg_approval_denied), Toast.LENGTH_SHORT).show()
     }
     fun requestApproval(sender: android.content.IntentSender, action: () -> Unit) {
         approvalAction = action
@@ -211,9 +265,9 @@ private fun GalleryContent(
                 vm.refreshPreferences()
                 vm.load()
                 selected = emptySet()
-                Toast.makeText(ctx, "Selected media deleted", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, ctx.getString(R.string.msg_deleted), Toast.LENGTH_SHORT).show()
             }.onFailure {
-                Toast.makeText(ctx, "Could not delete media: ${it.message ?: "permission denied"}", Toast.LENGTH_LONG).show()
+                Toast.makeText(ctx, ctx.getString(R.string.msg_delete_failed, it.message ?: ctx.getString(R.string.msg_permission_denied)), Toast.LENGTH_LONG).show()
             }
             Unit
         }
@@ -221,7 +275,7 @@ private fun GalleryContent(
             runCatching {
                 val request = MediaStore.createDeleteRequest(ctx.contentResolver, items.map { it.uri })
                 requestApproval(request.intentSender, action)
-            }.onFailure { Toast.makeText(ctx, "Delete permission could not be requested.", Toast.LENGTH_LONG).show() }
+            }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_delete_request_failed), Toast.LENGTH_LONG).show() }
         } else action()
     }
     fun renameMedia(item: MediaItem, name: String) {
@@ -229,37 +283,138 @@ private fun GalleryContent(
             runCatching {
                 MediaOperations.rename(ctx, item, name)
                 vm.load()
-                Toast.makeText(ctx, "Renamed", Toast.LENGTH_SHORT).show()
-            }.onFailure { Toast.makeText(ctx, "Could not rename: ${it.message ?: "permission denied"}", Toast.LENGTH_LONG).show() }
+                Toast.makeText(ctx, ctx.getString(R.string.msg_renamed), Toast.LENGTH_SHORT).show()
+            }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_rename_failed, it.message ?: ctx.getString(R.string.msg_permission_denied)), Toast.LENGTH_LONG).show() }
             Unit
         }
         if (Build.VERSION.SDK_INT >= 30) {
             runCatching {
                 requestApproval(MediaStore.createWriteRequest(ctx.contentResolver, listOf(item.uri)).intentSender, action)
-            }.onFailure { Toast.makeText(ctx, "Write permission could not be requested.", Toast.LENGTH_LONG).show() }
+            }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_write_request_failed), Toast.LENGTH_LONG).show() }
         } else action()
     }
-    fun setTrashed(item: MediaItem, value: Boolean) {
-        GalleryPreferences.setTrashed(ctx, item, value)
+    /**
+     * Trash / restore.
+     * API 30+: asli system trash (MediaStore.createTrashRequest). Files doosre apps me bhi trash hoti hain
+     * aur MediaStore 30 din baad khud delete kar deta hai.
+     * API < 30: system trash nahi hai, isliye app-level flag + 30 din baad auto-delete (fallback).
+     */
+    fun trashMedia(items: List<MediaItem>, value: Boolean) {
+        if (items.isEmpty()) return
+        val systemItems = when {
+            Build.VERSION.SDK_INT < 30 -> emptyList()
+            value -> items
+            else -> items.filter { it.isTrashed }
+        }
+        val systemSet = systemItems.toSet()
+        val flagItems = items.filter { it !in systemSet }
+        if (flagItems.isNotEmpty()) {
+            GalleryPreferences.setTrashedKeys(ctx, flagItems.map { it.key }, value)
+            vm.refreshPreferences()
+        }
+        val message = ctx.getString(if (value) R.string.msg_trashed else R.string.msg_restored)
+        if (systemItems.isEmpty()) {
+            Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (Build.VERSION.SDK_INT < 30) return
+        runCatching {
+            val request = MediaStore.createTrashRequest(ctx.contentResolver, systemItems.map { it.uri }, value)
+            requestApproval(request.intentSender) {
+                vm.load()
+                Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+            }
+        }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_trash_request_failed), Toast.LENGTH_LONG).show() }
+    }
+    fun migrateLegacyTrash(items: List<MediaItem>) {
+        if (items.isEmpty()) return
+        if (Build.VERSION.SDK_INT < 30) return
+        runCatching {
+            val request = MediaStore.createTrashRequest(ctx.contentResolver, items.map { it.uri }, true)
+            requestApproval(request.intentSender) {
+                GalleryPreferences.setTrashedKeys(ctx, items.map { it.key }, false)
+                vm.refreshPreferences()
+                vm.load()
+                Toast.makeText(ctx, ctx.getString(R.string.msg_trash_migrated), Toast.LENGTH_SHORT).show()
+            }
+        }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_trash_request_failed), Toast.LENGTH_LONG).show() }
+    }
+
+    fun hideAlbum(id: Long) {
+        GalleryPreferences.setAlbumHidden(ctx, id, true)
         vm.refreshPreferences()
-        Toast.makeText(ctx, if (value) "Moved to Fast Gallery Trash" else "Restored", Toast.LENGTH_SHORT).show()
+        if (albumId == id) albumId = null
+        Toast.makeText(ctx, ctx.getString(R.string.msg_album_hidden), Toast.LENGTH_LONG).show()
+    }
+    fun unhideAlbum(id: Long) {
+        GalleryPreferences.setAlbumHidden(ctx, id, false)
+        vm.refreshPreferences()
+        Toast.makeText(ctx, ctx.getString(R.string.msg_album_unhidden), Toast.LENGTH_SHORT).show()
+    }
+    fun lockAlbum(id: Long) {
+        GalleryPreferences.setAlbumLocked(ctx, id, true)
+        // Jo album abhi khula hai wo is session me khula rahe; baaki sab ke liye lock turant lagu.
+        if (albumId == id) vm.markAlbumUnlocked(id)
+        vm.refreshPreferences()
+        val msg = ctx.getString(
+            if (canAuthenticateAlbum(ctx.findActivity())) R.string.msg_album_locked
+            else R.string.msg_album_locked_no_screen_lock
+        )
+        Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+    }
+    fun unlockAlbum(id: Long) {
+        val done = {
+            GalleryPreferences.setAlbumLocked(ctx, id, false)
+            vm.refreshPreferences()
+            Toast.makeText(ctx, ctx.getString(R.string.msg_lock_removed), Toast.LENGTH_SHORT).show()
+        }
+        val activity = ctx.findActivity()
+        // Removing a lock needs the same authentication as opening; without any device lock there is nothing to protect.
+        if (!canAuthenticateAlbum(activity)) done()
+        else authenticateAlbum(activity, done) {
+            Toast.makeText(ctx, ctx.getString(R.string.msg_lock_remove_auth_failed), Toast.LENGTH_SHORT).show()
+        }
     }
 
     val inAlbum = tab == 1 && albumId != null
     val title = when {
-        tab == 4 -> "Settings"
-        inAlbum -> state.albums.firstOrNull { it.id == albumId }?.name ?: "Album"
-        selected.isNotEmpty() -> "${selected.size} selected"
-        tab == 0 -> "Photos"
-        tab == 1 -> "Albums"
-        tab == 2 -> "Favorites"
-        else -> "Trash"
+        tab == 4 -> stringResource(
+            when (settingsPage) { 1 -> R.string.hidden_albums; 2 -> R.string.locked_albums; else -> R.string.nav_settings }
+        )
+        inAlbum -> state.albums.firstOrNull { it.id == albumId }?.name ?: stringResource(R.string.title_album_fallback)
+        selected.isNotEmpty() -> stringResource(R.string.selected_count, selected.size)
+        tab == 0 -> stringResource(R.string.nav_photos)
+        tab == 1 -> stringResource(R.string.nav_albums)
+        tab == 2 -> stringResource(R.string.nav_favorites)
+        else -> stringResource(R.string.nav_trash)
+    }
+
+    val trashedKeys = remember(state.trashKeys, state.trashItems) {
+        state.trashKeys + state.trashItems.map { it.key }
+    }
+    var migrateDismissed by rememberSaveable { mutableStateOf(false) }
+    val legacyTrash = if (tab == 3 && Build.VERSION.SDK_INT >= 30 && !displayContextStale && !migrateDismissed) {
+        currentList.filter { !it.isTrashed }
+    } else emptyList()
+    if (legacyTrash.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { migrateDismissed = true },
+            title = { Text(stringResource(R.string.migrate_title)) },
+            text = {
+                Text(stringResource(R.string.migrate_body, legacyTrash.size))
+            },
+            confirmButton = {
+                TextButton(onClick = { migrateDismissed = true; migrateLegacyTrash(legacyTrash) }) { Text(stringResource(R.string.action_move)) }
+            },
+            dismissButton = { TextButton(onClick = { migrateDismissed = true }) { Text(stringResource(R.string.action_later)) } },
+        )
     }
 
     BackHandler(enabled = viewerIndex >= 0) { viewerIndex = -1 }
     BackHandler(enabled = viewerIndex < 0 && selected.isNotEmpty()) { selected = emptySet() }
     BackHandler(enabled = viewerIndex < 0 && albumId != null) { albumId = null }
     BackHandler(enabled = viewerIndex < 0 && tab == 4) { tab = 0 }
+    BackHandler(enabled = viewerIndex < 0 && tab == 4 && settingsPage != 0) { settingsPage = 0 }
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
@@ -271,40 +426,90 @@ private fun GalleryContent(
                                 value = search,
                                 onValueChange = { search = it },
                                 singleLine = true,
-                                placeholder = { Text("Search photos, videos, albums") },
+                                placeholder = { Text(stringResource(R.string.search_hint)) },
                             )
                         } else Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     },
                     navigationIcon = {
-                        if (inAlbum || selected.isNotEmpty()) {
-                            TextButton(onClick = {
-                                if (selected.isNotEmpty()) selected = emptySet() else albumId = null
-                            }) { Text("Back") }
+                        if (inAlbum || selected.isNotEmpty() || (tab == 4 && settingsPage != 0)) {
+                            IconButton(onClick = {
+                                if (selected.isNotEmpty()) selected = emptySet()
+                                else if (tab == 4) settingsPage = 0
+                                else albumId = null
+                            }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                            }
                         }
                     },
                     actions = {
                         if (selected.isNotEmpty()) {
-                            TextButton(onClick = {
-                                shareItems(ctx, currentList.filter { it.key in selected })
-                            }) { Text("Share") }
-                            TextButton(onClick = {
-                                currentList.filter { it.key in selected }.forEach { GalleryPreferences.toggleFavorite(ctx, it) }
-                                vm.refreshPreferences()
-                            }) { Text("Favorite") }
-                            TextButton(onClick = {
-                                currentList.filter { it.key in selected }.forEach { setTrashed(it, tab != 3) }
-                                selected = emptySet()
-                            }) { Text(if (tab == 3) "Restore" else "Trash") }
-                            TextButton(onClick = { deleteMedia(currentList.filter { it.key in selected }) }) { Text("Delete") }
+                            val allSelected = currentList.isNotEmpty() && currentList.all { it.key in selected }
+                            IconButton(onClick = {
+                                selected = if (allSelected) emptySet() else currentList.map { it.key }.toSet()
+                            }) {
+                                Icon(
+                                    SelectAllIcon,
+                                    contentDescription = stringResource(if (allSelected) R.string.action_deselect_all else R.string.action_select_all),
+                                    tint = if (allSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
                         } else if (tab != 4) {
-                            TextButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) search = "" }) { Text(if (searchOpen) "Done" else "Search") }
-                            TextButton(onClick = { showFilters = true }) { Text("Sort") }
+                            IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) search = "" }) {
+                                Icon(
+                                    if (searchOpen) Icons.Filled.Close else Icons.Filled.Search,
+                                    contentDescription = stringResource(if (searchOpen) R.string.action_close_search else R.string.action_search),
+                                )
+                            }
+                            IconButton(onClick = { if (tab == 1 && !inAlbum) showAlbumSort = true else showFilters = true }) {
+                                Icon(SortIcon, contentDescription = stringResource(R.string.action_sort))
+                            }
+                            val openAlbum = albumId
+                            if (inAlbum && openAlbum != null) {
+                                Box {
+                                    IconButton(onClick = { albumMenuOpen = true }) {
+                                        Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.album_options))
+                                    }
+                                    DropdownMenu(expanded = albumMenuOpen, onDismissRequest = { albumMenuOpen = false }) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.album_hide)) },
+                                            onClick = { albumMenuOpen = false; hideAlbum(openAlbum) },
+                                        )
+                                        val isLocked = openAlbum.toString() in state.lockedAlbumIds
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(if (isLocked) R.string.album_remove_lock else R.string.album_lock)) },
+                                            onClick = {
+                                                albumMenuOpen = false
+                                                if (isLocked) unlockAlbum(openAlbum) else lockAlbum(openAlbum)
+                                            },
+                                        )
+                                    }
+                                }
+                            }
                         }
                     },
                 )
             },
             bottomBar = {
-                if (viewerIndex < 0 && selected.isEmpty()) {
+                if (viewerIndex < 0 && selected.isNotEmpty()) {
+                    val picked = currentList.filter { it.key in selected }
+                    SelectionActionBar(
+                        inTrash = tab == 3,
+                        allFavorite = picked.isNotEmpty() && picked.all { it.key in state.favoriteKeys },
+                        onShare = { shareItems(ctx, picked) },
+                        onFavorite = {
+                            // Sab pehle se favorite hain to hata do, warna jo nahi hain unhe add karo.
+                            val allFav = picked.all { it.key in state.favoriteKeys }
+                            picked.filter { (it.key in state.favoriteKeys) == allFav }
+                                .forEach { GalleryPreferences.toggleFavorite(ctx, it) }
+                            vm.refreshPreferences()
+                        },
+                        onTrashOrRestore = {
+                            selected = emptySet()
+                            trashMedia(picked, tab != 3)
+                        },
+                        onDelete = { deleteMedia(picked) },
+                    )
+                } else if (viewerIndex < 0) {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -323,9 +528,13 @@ private fun GalleryContent(
                             containerColor = Color.Transparent,
                             tonalElevation = 0.dp,
                         ) {
-                            val destinations = remember {
-                                listOf("Photos", "Albums", "Favorites", "Trash", "Settings")
-                            }
+                            val destinations = listOf(
+                                stringResource(R.string.nav_photos),
+                                stringResource(R.string.nav_albums),
+                                stringResource(R.string.nav_favorites),
+                                stringResource(R.string.nav_trash),
+                                stringResource(R.string.nav_settings),
+                            )
                             val itemColors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
                                 selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -344,6 +553,7 @@ private fun GalleryContent(
                                     onClick = {
                                         tab = index
                                         albumId = null
+                                        settingsPage = 0
                                         if (index != 0) searchOpen = false
                                     },
                                     colors = itemColors,
@@ -384,79 +594,121 @@ private fun GalleryContent(
                 }
             },
         ) { padding ->
-            when {
-                !granted -> PermissionScreen(padding) { permissionLauncher.launch(mediaPermissions()) }
-                state.loading -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-                needsCompleteLibrary && state.hasMore && tab != 4 ->
-                    Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+            Box(Modifier.fillMaxSize()) {
+                when {
+                    !granted -> PermissionScreen(padding) { permissionLauncher.launch(mediaPermissions()) }
+                    state.loading -> SkeletonGrid(columns, padding)
+                    needsCompleteLibrary && state.hasMore && tab != 4 -> SkeletonGrid(columns, padding)
+                    tab == 4 && settingsPage == 1 -> ManagedAlbumsScreen(
+                        padding = padding,
+                        locked = false,
+                        albums = state.albums,
+                        ids = state.hiddenAlbumIds,
+                        onRemove = ::unhideAlbum,
+                        onAdd = ::hideAlbum,
+                    )
+                    tab == 4 && settingsPage == 2 -> ManagedAlbumsScreen(
+                        padding = padding,
+                        locked = true,
+                        albums = state.albums,
+                        ids = state.lockedAlbumIds,
+                        onRemove = ::unlockAlbum,
+                        onAdd = ::lockAlbum,
+                    )
+                    tab == 4 -> SettingsScreen(
+                        padding = padding,
+                        theme = theme,
+                        columns = columns,
+                        hiddenCount = state.hiddenAlbumIds.size,
+                        lockedCount = state.lockedAlbumIds.size,
+                        onTheme = onTheme,
+                        onColumns = { columns = it; GalleryPreferences.setColumns(ctx, it) },
+                        onOpenHidden = { settingsPage = 1 },
+                        onOpenLocked = { settingsPage = 2 },
+                    )
+                    tab == 1 && !inAlbum -> {
+                        val albums = sortAlbums(
+                            state.albums.filter {
+                                it.id.toString() !in state.hiddenAlbumIds &&
+                                    (search.isBlank() || it.name.contains(search, true))
+                            },
+                            albumSort,
+                            pinnedAlbums,
+                        )
+                        if (albums.isEmpty()) {
+                            val searching = search.isNotBlank()
+                            EmptyState(
+                                icon = if (searching) Icons.Filled.Search else ImageVector.vectorResource(R.drawable.ic_albums),
+                                title = stringResource(if (searching) R.string.empty_filtered_title else R.string.empty_albums_title),
+                                subtitle = stringResource(if (searching) R.string.empty_filtered_subtitle else R.string.empty_albums_subtitle),
+                                padding = padding,
+                            )
+                        }
+                        else AlbumsGrid(
+                            albums = albums,
+                            padding = padding,
+                            locked = state.lockedAlbumIds,
+                            pinned = pinnedAlbums,
+                            onTogglePin = { album ->
+                                val pin = album.id.toString() !in pinnedAlbums
+                                GalleryPreferences.setAlbumPinned(ctx, album.id, pin)
+                                pinnedAlbums = GalleryPreferences.pinnedAlbums(ctx)
+                            },
+                            onOpen = { album ->
+                                val open = { albumId = album.id }
+                                if (album.id.toString() in state.lockedAlbumIds) {
+                                    val unlockAndOpen = {
+                                        vm.markAlbumUnlocked(album.id)
+                                        open()
+                                    }
+                                    authenticateAlbum(ctx.findActivity(), unlockAndOpen) {
+                                        Toast.makeText(ctx, ctx.getString(R.string.msg_album_auth_failed), Toast.LENGTH_SHORT).show()
+                                    }
+                                } else open()
+                            },
+                            onHide = { hideAlbum(it.id) },
+                            onToggleLock = { album ->
+                                if (album.id.toString() in state.lockedAlbumIds) unlockAlbum(album.id) else lockAlbum(album.id)
+                            },
+                        )
                     }
-                tab == 4 -> SettingsScreen(
-                    padding = padding,
-                    theme = theme,
-                    columns = columns,
-                    albums = state.albums,
-                    hidden = state.hiddenAlbumIds,
-                    locked = state.lockedAlbumIds,
-                    onTheme = onTheme,
-                    onColumns = { columns = it; GalleryPreferences.setColumns(ctx, it) },
-                    onHidden = { id, hidden ->
-                        GalleryPreferences.setAlbumHidden(ctx, id, hidden)
-                        vm.refreshPreferences()
-                    },
-                    onLocked = { id, locked ->
-                        GalleryPreferences.setAlbumLocked(ctx, id, locked)
-                        vm.refreshPreferences()
-                    },
-                )
-                tab == 1 && !inAlbum -> {
-                    val albums = state.albums.filter {
-                        it.id.toString() !in state.hiddenAlbumIds &&
-                            (search.isBlank() || it.name.contains(search, true))
+                    displayContextStale -> SkeletonGrid(columns, padding)
+                    currentList.isEmpty() -> {
+                        val filtered = search.isNotBlank() || filter != MediaFilter.ALL
+                        val (icon, titleRes, subtitleRes) = when {
+                            filtered -> Triple(Icons.Filled.Search, R.string.empty_filtered_title, R.string.empty_filtered_subtitle)
+                            tab == 2 -> Triple(Icons.Filled.FavoriteBorder, R.string.empty_favorites_title, R.string.empty_favorites_subtitle)
+                            tab == 3 -> Triple(Icons.Filled.Delete, R.string.empty_trash_title, R.string.empty_trash_subtitle)
+                            else -> Triple(ImageVector.vectorResource(R.drawable.ic_photos), R.string.empty_media_title, R.string.empty_media_subtitle)
+                        }
+                        EmptyState(icon, stringResource(titleRes), stringResource(subtitleRes), padding)
                     }
-                    if (albums.isEmpty()) CenterMessage("No albums found", padding)
-                    else AlbumsGrid(albums, padding) { album ->
-                        val open = { albumId = album.id }
-                        if (album.id.toString() in state.lockedAlbumIds) {
-                            authenticateAlbum(ctx.findActivity(), open) {
-                                Toast.makeText(ctx, "Album authentication failed.", Toast.LENGTH_SHORT).show()
-                            }
-                        } else open()
-                    }
+                    else -> MediaGrid(
+                        items = currentList,
+                        padding = padding,
+                        selected = selected,
+                        columns = columns,
+                        flingFriction = if (tab == 0) 0.007f else 0.015f,
+                        contentVersion = displayResult.version,
+                        resetKey = Triple(sort, filter, search),
+                        onOpen = { viewerIndex = it },
+                        onToggleSelection = { item ->
+                            selected = if (item.key in selected) selected - item.key else selected + item.key
+                        },
+                        onPinchColumns = { next ->
+                            columns = next.coerceIn(2, 8)
+                            GalleryPreferences.setColumns(ctx, columns)
+                        },
+                        onLoadMore = vm::loadNextPage,
+                    )
                 }
-                displayContextStale -> Box(
-                    Modifier.fillMaxSize().padding(padding),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator()
-                }
-                currentList.isEmpty() -> CenterMessage(
-                    when (tab) {
-                        2 -> "No favorites yet"
-                        3 -> "Trash is empty"
-                        else -> "No matching photos or videos"
-                    },
-                    padding,
+            if (granted && partialAccess && !partialBannerDismissed) {
+                PartialAccessBanner(
+                    onManage = { permissionLauncher.launch(mediaPermissions()) },
+                    onDismiss = { partialBannerDismissed = true },
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(padding).padding(horizontal = 12.dp, vertical = 8.dp),
                 )
-                else -> MediaGrid(
-                    items = currentList,
-                    padding = padding,
-                    selected = selected,
-                    columns = columns,
-                    flingFriction = if (tab == 0) 0.007f else 0.015f,
-                    itemsVersion = state.itemsVersion,
-                    onOpen = { viewerIndex = it },
-                    onToggleSelection = { item ->
-                        selected = if (item.key in selected) selected - item.key else selected + item.key
-                    },
-                    onPinchColumns = { next ->
-                        columns = next.coerceIn(2, 8)
-                        GalleryPreferences.setColumns(ctx, columns)
-                    },
-                    onLoadMore = vm::loadNextPage,
-                )
+            }
             }
         }
         if (viewerIndex >= 0 && currentList.isNotEmpty()) {
@@ -464,11 +716,11 @@ private fun GalleryContent(
                 items = currentList,
                 startIndex = viewerIndex,
                 favoriteKeys = state.favoriteKeys,
-                trashedKeys = state.trashKeys,
+                trashedKeys = trashedKeys,
                 onLoadMore = vm::loadNextPage,
                 onClose = { viewerIndex = -1 },
                 onFavorite = { GalleryPreferences.toggleFavorite(ctx, it); vm.refreshPreferences() },
-                onSetTrashed = ::setTrashed,
+                onSetTrashed = { item, value -> trashMedia(listOf(item), value) },
                 onDelete = { deleteMedia(listOf(it)) },
                 onRename = ::renameMedia,
                 onCopyOrMove = { item, folder, move ->
@@ -476,10 +728,10 @@ private fun GalleryContent(
                         val result = runCatching { MediaOperations.copyToAlbum(ctx, item, folder) }
                         withContext(Dispatchers.Main) {
                             if (result.isSuccess && result.getOrNull() != null) {
-                                Toast.makeText(ctx, "Copied to $folder", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(ctx, ctx.getString(R.string.msg_copied, folder), Toast.LENGTH_SHORT).show()
                                 vm.load()
                                 if (move) deleteMedia(listOf(item))
-                            } else Toast.makeText(ctx, "Copy failed: ${result.exceptionOrNull()?.message ?: "unknown error"}", Toast.LENGTH_LONG).show()
+                            } else Toast.makeText(ctx, ctx.getString(R.string.msg_copy_failed, result.exceptionOrNull()?.message ?: ctx.getString(R.string.msg_unknown_error)), Toast.LENGTH_LONG).show()
                         }
                     }
                 },
@@ -487,7 +739,7 @@ private fun GalleryContent(
                     scope.launch(Dispatchers.IO) {
                         val result = runCatching { MediaOperations.setWallpaper(ctx, item) }
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(ctx, if (result.isSuccess) "Wallpaper set" else "Wallpaper failed: ${result.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(ctx, if (result.isSuccess) ctx.getString(R.string.msg_wallpaper_set) else ctx.getString(R.string.msg_wallpaper_failed, result.exceptionOrNull()?.message ?: ctx.getString(R.string.msg_unknown_error)), Toast.LENGTH_LONG).show()
                         }
                     }
                 },
@@ -496,9 +748,9 @@ private fun GalleryContent(
                         val result = runCatching { MediaOperations.saveEditedCopy(ctx, item, edit) }
                         withContext(Dispatchers.Main) {
                             if (result.isSuccess && result.getOrNull() != null) {
-                                Toast.makeText(ctx, "Edited copy saved", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(ctx, ctx.getString(R.string.msg_edit_saved), Toast.LENGTH_SHORT).show()
                                 vm.load()
-                            } else Toast.makeText(ctx, "Edit failed: ${result.exceptionOrNull()?.message ?: "format not supported"}", Toast.LENGTH_LONG).show()
+                            } else Toast.makeText(ctx, ctx.getString(R.string.msg_edit_failed, result.exceptionOrNull()?.message ?: ctx.getString(R.string.msg_format_not_supported)), Toast.LENGTH_LONG).show()
                         }
                     }
                 },
@@ -506,35 +758,73 @@ private fun GalleryContent(
         }
     }
 
+    if (showAlbumSort) {
+        AlertDialog(
+            onDismissRequest = { showAlbumSort = false },
+            title = { Text(stringResource(R.string.album_sort_title)) },
+            text = {
+                androidx.compose.foundation.layout.Column(Modifier.selectableGroup()) {
+                    listOf(
+                        AlbumSort.RECENT to R.string.album_sort_recent,
+                        AlbumSort.NAME to R.string.album_sort_name,
+                        AlbumSort.COUNT to R.string.album_sort_count,
+                    ).forEach { (value, labelRes) ->
+                        androidx.compose.foundation.layout.Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = albumSort == value,
+                                    role = androidx.compose.ui.semantics.Role.RadioButton,
+                                    onClick = {
+                                        albumSort = value
+                                        GalleryPreferences.setAlbumSort(ctx, value)
+                                        showAlbumSort = false
+                                    },
+                                )
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            androidx.compose.material3.RadioButton(selected = albumSort == value, onClick = null)
+                            Text(stringResource(labelRes), Modifier.padding(start = 12.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showAlbumSort = false }) { Text(stringResource(R.string.action_done)) } },
+        )
+    }
+
     if (showFilters) {
         AlertDialog(
             onDismissRequest = { showFilters = false },
-            title = { Text("Sort and filter") },
+            title = { Text(stringResource(R.string.filter_title)) },
             text = {
                 androidx.compose.foundation.layout.Column {
-                    Text("Sort by", style = androidx.compose.material3.MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.sort_by), style = androidx.compose.material3.MaterialTheme.typography.titleSmall)
                     listOf(
-                        GallerySort.DATE_NEWEST to "Newest first",
-                        GallerySort.DATE_OLDEST to "Oldest first",
-                        GallerySort.NAME to "Name",
-                        GallerySort.SIZE_LARGEST to "Largest first",
-                    ).forEach { (value, label) ->
+                        GallerySort.DATE_NEWEST to R.string.sort_newest,
+                        GallerySort.DATE_OLDEST to R.string.sort_oldest,
+                        GallerySort.NAME to R.string.sort_name,
+                        GallerySort.SIZE_LARGEST to R.string.sort_largest,
+                    ).forEach { (value, labelRes) ->
+                        val label = stringResource(labelRes)
                         TextButton(onClick = { sort = value }) { Text(if (sort == value) "✓ $label" else label) }
                     }
-                    Text("Show", style = androidx.compose.material3.MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.filter_show), style = androidx.compose.material3.MaterialTheme.typography.titleSmall)
                     listOf(
-                        MediaFilter.ALL to "All media",
-                        MediaFilter.PHOTOS to "Photos",
-                        MediaFilter.VIDEOS to "Videos",
-                        MediaFilter.GIFS to "GIFs",
-                        MediaFilter.RAW to "RAW",
-                    ).forEach { (value, label) ->
+                        MediaFilter.ALL to R.string.filter_all,
+                        MediaFilter.PHOTOS to R.string.filter_photos,
+                        MediaFilter.VIDEOS to R.string.filter_videos,
+                        MediaFilter.GIFS to R.string.filter_gifs,
+                        MediaFilter.RAW to R.string.filter_raw,
+                    ).forEach { (value, labelRes) ->
+                        val label = stringResource(labelRes)
                         TextButton(onClick = { filter = value }) { Text(if (filter == value) "✓ $label" else label) }
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showFilters = false }) { Text("Done") } },
-            dismissButton = { TextButton(onClick = { sort = GallerySort.DATE_NEWEST; filter = MediaFilter.ALL }) { Text("Reset") } },
+            confirmButton = { TextButton(onClick = { showFilters = false }) { Text(stringResource(R.string.action_done)) } },
+            dismissButton = { TextButton(onClick = { sort = GallerySort.DATE_NEWEST; filter = MediaFilter.ALL }) { Text(stringResource(R.string.action_reset)) } },
         )
     }
 }

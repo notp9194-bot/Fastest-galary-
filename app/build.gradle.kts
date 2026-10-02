@@ -1,8 +1,27 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("androidx.baselineprofile")
 }
+
+// Release signing: keystore.properties (local, git me nahi jaata) ya environment variables (CI).
+// Keys: storeFile, storePassword, keyAlias, keyPassword  |  env: FG_KEYSTORE_FILE, FG_KEYSTORE_PASSWORD, FG_KEY_ALIAS, FG_KEY_PASSWORD
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun signingValue(propKey: String, envKey: String): String? =
+    (keystoreProps.getProperty(propKey) ?: System.getenv(envKey))?.takeIf { it.isNotBlank() }
+
+val releaseStoreFile = signingValue("storeFile", "FG_KEYSTORE_FILE")
+val releaseStorePassword = signingValue("storePassword", "FG_KEYSTORE_PASSWORD")
+val releaseKeyAlias = signingValue("keyAlias", "FG_KEY_ALIAS")
+val releaseKeyPassword = signingValue("keyPassword", "FG_KEY_PASSWORD")
+val hasReleaseKey = listOf(releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { it != null } &&
+    rootProject.file(releaseStoreFile!!).exists()
 
 android {
     namespace = "com.fastgallery.app"
@@ -12,8 +31,19 @@ android {
         applicationId = "com.fastgallery.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "1.4.4"
+        versionCode = 12
+        versionName = "1.4.6"
+    }
+
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
@@ -21,8 +51,13 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Debug key se sign: release APK seedha install ho jaata hai. Play Store ke liye apni keystore lagao.
-            signingConfig = signingConfigs.getByName("debug")
+            // Apni keystore mile to usse sign; warna local testing ke liye debug key (Play Store pe upload NAHI hoga).
+            signingConfig = if (hasReleaseKey) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn("WARNING: release keystore nahi mili -> debug key se sign ho raha hai. Play Store ke liye keystore.properties set karo (README dekho).")
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
@@ -53,4 +88,15 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-video:2.7.0")
     implementation("io.coil-kt:coil-gif:2.7.0")
+
+    // Baseline Profile: install ke waqt ART ko hot code batata hai -> cold start tez.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
+    "baselineProfile"(project(":baselineprofile"))
+}
+
+baselineProfile {
+    // CI/normal build me device ki zaroorat na pade; profile manually generate karke commit karo.
+    automaticGenerationDuringBuild = false
+    saveInSrc = true
+    dexLayoutOptimization = true
 }

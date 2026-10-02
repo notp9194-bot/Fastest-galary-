@@ -21,6 +21,10 @@ data class MediaItem(
     val height: Int = 0,
     val dateTaken: Long = 0L,
     val relativePath: String = "",
+    /** true = system (MediaStore) trash me hai, API 30+. */
+    val isTrashed: Boolean = false,
+    /** System trash se auto-delete ka time (seconds); 0 = unknown. */
+    val trashExpiresSec: Long = 0L,
 ) {
     /** Images aur videos ke IDs collide ho sakte hain; URI is the stable cross-table key. */
     val key: String get() = uri.toString()
@@ -69,6 +73,18 @@ fun buildEntries(items: List<MediaItem>): List<GridEntry> {
 }
 
 enum class GallerySort { DATE_NEWEST, DATE_OLDEST, NAME, SIZE_LARGEST }
+enum class AlbumSort { RECENT, NAME, COUNT }
+
+/** Pinned albums hamesha upar (apne beech chune hue sort me), baaki unke neeche. */
+fun sortAlbums(albums: List<Album>, sort: AlbumSort, pinned: Set<String>): List<Album> {
+    val base = when (sort) {
+        AlbumSort.RECENT -> albums.sortedByDescending { it.cover.dateAdded }
+        AlbumSort.NAME -> albums.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+        AlbumSort.COUNT -> albums.sortedByDescending { it.count }
+    }
+    return base.filter { it.id.toString() in pinned } + base.filter { it.id.toString() !in pinned }
+}
+
 enum class MediaFilter { ALL, PHOTOS, VIDEOS, GIFS, RAW }
 
 fun MediaItem.matchesFilter(filter: MediaFilter): Boolean = when (filter) {

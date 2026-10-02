@@ -1,3 +1,221 @@
 <resources>
     <string name="app_name">Fast Gallery</string>
+    <string name="action_back">Back</string>
+    <string name="action_search">Search</string>
+    <string name="action_close_search">Close search</string>
+    <string name="action_sort">Sort and filter</string>
+    <string name="album_locked">Locked album</string>
+    <string name="action_share">Share</string>
+    <string name="action_slideshow_start">Start slideshow</string>
+    <string name="action_slideshow_stop">Pause slideshow</string>
+    <string name="action_favorite_add">Add to favorites</string>
+    <string name="action_favorite_remove">Remove from favorites</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_trash">Move to trash</string>
+    <string name="action_restore">Restore from trash</string>
+    <string name="action_more">More options</string>
+    <string name="action_delete_permanently">Delete permanently</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_copy_move">Copy / move</string>
+    <string name="action_details">Details</string>
+    <string name="action_wallpaper">Set as wallpaper</string>
+    <string name="selected_count">%d selected</string>
+    <string name="action_select_all">Select all</string>
+    <string name="action_deselect_all">Deselect all</string>
+    <string name="action_favorite_short">Favorite</string>
+    <string name="action_unfavorite_short">Unfavorite</string>
+    <string name="action_trash_short">Trash</string>
+    <string name="action_restore_short">Restore</string>
+    <string name="action_delete_short">Delete</string>
+
+    <!-- Common -->
+    <string name="action_cancel">Cancel</string>
+    <string name="action_close">Close</string>
+    <string name="action_done">Done</string>
+    <string name="action_reset">Reset</string>
+    <string name="action_continue">Continue</string>
+    <string name="action_move">Move</string>
+    <string name="action_later">Later</string>
+    <string name="loading">Loading</string>
+    <string name="thumb_selected">Selected</string>
+    <string name="thumb_photo_desc">Photo, %1$s</string>
+    <string name="thumb_video_desc">Video, %1$s, %2$s</string>
+    <string name="badge_raw">RAW</string>
+    <string name="unknown">Unknown</string>
+    <string name="share_selected">Share selected media</string>
+
+    <!-- Navigation / titles -->
+    <string name="nav_photos">Photos</string>
+    <string name="nav_albums">Albums</string>
+    <string name="nav_favorites">Favorites</string>
+    <string name="nav_trash">Trash</string>
+    <string name="nav_settings">Settings</string>
+    <string name="title_album_fallback">Album</string>
+    <string name="search_hint">Search photos, videos, albums</string>
+
+    <!-- Permission -->
+    <string name="permission_title">Allow access to show your photos and videos</string>
+    <string name="permission_allow">Allow access</string>
+    <string name="permission_open_settings">Open settings</string>
+
+    <string name="partial_access_message">Showing only the photos and videos you selected.</string>
+    <string name="partial_access_manage">Manage access</string>
+    <string name="partial_access_dismiss">Dismiss</string>
+
+    <!-- Empty states -->
+    <string name="empty_media_title">No photos or videos yet</string>
+    <string name="empty_media_subtitle">Photos and videos on your device will show up here.</string>
+    <string name="empty_albums_title">No albums found</string>
+    <string name="empty_albums_subtitle">Albums appear here once your device has photos or videos.</string>
+    <string name="empty_favorites_title">No favorites yet</string>
+    <string name="empty_favorites_subtitle">Tap the heart on a photo or video to keep it here.</string>
+    <string name="empty_trash_title">Trash is empty</string>
+    <string name="empty_trash_subtitle">Deleted items stay here for 30 days.</string>
+    <string name="empty_filtered_title">No matching photos or videos</string>
+    <string name="empty_filtered_subtitle">Try a different search, sort or filter.</string>
+
+    <!-- Albums -->
+    <string name="album_options">Album options</string>
+    <string name="album_pin">Pin to top</string>
+    <string name="album_unpin">Unpin</string>
+    <string name="album_pinned">Pinned</string>
+    <string name="album_sort_title">Sort albums</string>
+    <string name="album_sort_recent">Recently updated</string>
+    <string name="album_sort_name">Name (A to Z)</string>
+    <string name="album_sort_count">Most items</string>
+    <string name="album_hide">Hide album</string>
+    <string name="album_lock">Lock album</string>
+    <string name="album_remove_lock">Remove lock</string>
+    <string name="album_count_locked">%1$d · Locked</string>
+
+    <!-- Authentication -->
+    <string name="auth_title">Unlock private album</string>
+    <string name="auth_subtitle">Confirm your device identity</string>
+
+    <!-- Settings -->
+    <string name="settings_appearance">Appearance</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="settings_grid_columns">Grid columns: %1$d</string>
+    <string name="settings_pinch_hint">Pinch the grid to change columns quickly.</string>
+    <string name="settings_private_albums">Private albums</string>
+    <string name="settings_private_hint">Long-press an album in the Albums tab to hide or lock it.</string>
+    <string name="hidden_albums">Hidden albums</string>
+    <string name="locked_albums">Locked albums</string>
+
+    <!-- Hidden / locked album management -->
+    <string name="managed_locked_desc">Locked albums ask for device authentication when opened.</string>
+    <string name="managed_hidden_desc">Hidden albums don\'t appear in the Albums or Photos tabs.</string>
+    <string name="managed_add_album">Add album</string>
+    <string name="managed_none_locked">No locked albums</string>
+    <string name="managed_none_hidden">No hidden albums</string>
+    <string name="managed_unlock">Unlock</string>
+    <string name="managed_unhide">Unhide</string>
+    <string name="managed_unavailable">Unavailable album</string>
+    <string name="managed_pick_lock_title">Lock an album</string>
+    <string name="managed_pick_hide_title">Hide an album</string>
+    <string name="managed_search_albums">Search albums</string>
+    <string name="managed_no_albums_found">No albums found</string>
+
+    <!-- Sort and filter -->
+    <string name="filter_title">Sort and filter</string>
+    <string name="sort_by">Sort by</string>
+    <string name="sort_newest">Newest first</string>
+    <string name="sort_oldest">Oldest first</string>
+    <string name="sort_name">Name</string>
+    <string name="sort_largest">Largest first</string>
+    <string name="filter_show">Show</string>
+    <string name="filter_all">All media</string>
+    <string name="filter_photos">Photos</string>
+    <string name="filter_videos">Videos</string>
+    <string name="filter_gifs">GIFs</string>
+    <string name="filter_raw">RAW</string>
+
+    <!-- Legacy trash migration -->
+    <string name="migrate_title">Move old Trash to system Trash?</string>
+    <string name="migrate_body">%1$d items were only in Fast Gallery\'s own Trash. Move them to the system Trash? They are deleted automatically after 30 days there.</string>
+
+    <!-- Video player -->
+    <string name="video_play">Play</string>
+    <string name="video_pause">Pause</string>
+    <string name="video_mute">Mute</string>
+    <string name="video_unmute">Unmute</string>
+    <string name="video_seek">Seek bar</string>
+    <string name="video_speed">Playback speed</string>
+    <string name="video_speed_format">%1$sx</string>
+
+    <!-- Viewer dialogs -->
+    <string name="details_title">Photo details</string>
+    <string name="rename_title">Rename media</string>
+    <string name="rename_file_name">File name</string>
+    <string name="rename_confirm">Rename</string>
+    <string name="copy_title">Copy or move to album</string>
+    <string name="copy_folder_name">Album / folder name</string>
+    <string name="copy_delete_original">Delete original after copy</string>
+
+    <!-- Edit dialog -->
+    <string name="edit_title">Edit · %1$s</string>
+    <string name="edit_rotate_left">Rotate left</string>
+    <string name="edit_rotate_right">Rotate right</string>
+    <string name="crop_free">Free</string>
+    <string name="crop_square">Square</string>
+    <string name="crop_4_3">4:3</string>
+    <string name="crop_3_4">3:4</string>
+    <string name="crop_16_9">16:9</string>
+    <string name="edit_filter">Filter</string>
+    <string name="filter_original">Original</string>
+    <string name="filter_mono">Mono</string>
+    <string name="filter_warm">Warm</string>
+    <string name="filter_cool">Cool</string>
+    <string name="edit_note">Drag the box or its corners to crop. Saves a new copy; the original stays unchanged.</string>
+    <string name="edit_save_copy">Save copy</string>
+
+    <!-- Details (EXIF) labels -->
+    <string name="exif_name">Name</string>
+    <string name="exif_type">Type</string>
+    <string name="exif_album">Album</string>
+    <string name="exif_size">Size</string>
+    <string name="exif_dimensions">Dimensions</string>
+    <string name="exif_date_added">Date added</string>
+    <string name="exif_duration">Duration</string>
+    <string name="exif_captured">Captured</string>
+    <string name="exif_camera_make">Camera make</string>
+    <string name="exif_camera_model">Camera model</string>
+    <string name="exif_aperture">Aperture</string>
+    <string name="exif_exposure">Exposure</string>
+    <string name="exif_iso">ISO</string>
+    <string name="exif_focal_length">Focal length</string>
+    <string name="exif_lens">Lens</string>
+    <string name="exif_gps_latitude">GPS latitude</string>
+    <string name="exif_gps_longitude">GPS longitude</string>
+
+    <!-- Messages (toasts) -->
+    <string name="msg_approval_denied">Android did not approve this media change.</string>
+    <string name="msg_permission_denied">permission denied</string>
+    <string name="msg_unknown_error">unknown error</string>
+    <string name="msg_format_not_supported">format not supported</string>
+    <string name="msg_deleted">Selected media deleted</string>
+    <string name="msg_delete_failed">Could not delete media: %1$s</string>
+    <string name="msg_delete_request_failed">Delete permission could not be requested.</string>
+    <string name="msg_renamed">Renamed</string>
+    <string name="msg_rename_failed">Could not rename: %1$s</string>
+    <string name="msg_write_request_failed">Write permission could not be requested.</string>
+    <string name="msg_trashed">Moved to Trash. Auto-deletes after 30 days.</string>
+    <string name="msg_restored">Restored</string>
+    <string name="msg_trash_request_failed">Trash permission could not be requested.</string>
+    <string name="msg_trash_migrated">Moved to system Trash. Auto-deletes after 30 days.</string>
+    <string name="msg_album_hidden">Album hidden. Restore it from Settings > Hidden albums.</string>
+    <string name="msg_album_unhidden">Album unhidden</string>
+    <string name="msg_album_locked">Album locked</string>
+    <string name="msg_album_locked_no_screen_lock">Album locked. Set a device screen lock for it to take effect.</string>
+    <string name="msg_lock_removed">Lock removed</string>
+    <string name="msg_lock_remove_auth_failed">Authentication failed. Lock not removed.</string>
+    <string name="msg_album_auth_failed">Album authentication failed.</string>
+    <string name="msg_copied">Copied to %1$s</string>
+    <string name="msg_copy_failed">Copy failed: %1$s</string>
+    <string name="msg_wallpaper_set">Wallpaper set</string>
+    <string name="msg_wallpaper_failed">Wallpaper failed: %1$s</string>
+    <string name="msg_edit_saved">Edited copy saved</string>
+    <string name="msg_edit_failed">Edit failed: %1$s</string>
 </resources>
