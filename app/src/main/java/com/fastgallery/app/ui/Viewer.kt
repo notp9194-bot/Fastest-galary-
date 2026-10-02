@@ -1,6 +1,7 @@
 package com.fastgallery.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -103,6 +104,7 @@ fun Viewer(items: List<MediaItem>, startIndex: Int, onClose: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ViewerPage(item: MediaItem, onTap: () -> Unit) {
     val ctx = LocalContext.current
