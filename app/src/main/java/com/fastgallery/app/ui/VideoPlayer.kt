@@ -93,7 +93,7 @@ private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
 private const val AUTO_HIDE_MS = 3000L
 
 /** Material "Volume up" icon (extended icons dependency ke bina). */
-private val VolumeUpIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+internal val VolumeUpIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
     ImageVector.Builder(
         name = "VolumeUp",
         defaultWidth = 24.dp,
@@ -109,7 +109,7 @@ private val VolumeUpIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
 }
 
 /** Material "Volume off" icon. */
-private val VolumeOffIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+internal val VolumeOffIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
     ImageVector.Builder(
         name = "VolumeOff",
         defaultWidth = 24.dp,
@@ -125,7 +125,7 @@ private val VolumeOffIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
 }
 
 /** Material "Repeat" icon. */
-private val RepeatIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+internal val RepeatIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
     ImageVector.Builder(
         name = "Repeat",
         defaultWidth = 24.dp,
@@ -141,7 +141,7 @@ private val RepeatIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
 }
 
 /** Material "Picture in picture alt" icon. */
-private val PipIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+internal val PipIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
     ImageVector.Builder(
         name = "PictureInPicture",
         defaultWidth = 24.dp,

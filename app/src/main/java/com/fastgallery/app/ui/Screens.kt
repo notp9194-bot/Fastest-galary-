@@ -29,22 +29,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.selection.toggleable
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.GridView
-import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Slideshow
-import androidx.compose.material.icons.outlined.Vibration
-import androidx.compose.material.icons.outlined.VisibilityOff
-import androidx.compose.material.icons.outlined.VolumeOff
-import androidx.compose.material3.Surface
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.semantics.Role
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -97,6 +81,11 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.material3.Icon
 import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.Color
@@ -812,6 +801,23 @@ fun PermissionScreen(padding: PaddingValues, onAllow: () -> Unit) {
     }
 }
 
+/** Icon (24dp) + gap: section ke neeche ka content isi se align hota hai (premium settings look). */
+private val SettingIndent = 40.dp
+
+@Composable
+private fun SettingIcon(icon: ImageVector) {
+    Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+}
+
+@Composable
+private fun SettingTitle(icon: ImageVector, text: String) {
+    Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        SettingIcon(icon)
+        Spacer(Modifier.width(16.dp))
+        Text(text, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
@@ -844,266 +850,147 @@ fun SettingsScreen(
             top = padding.calculateTopPadding() + 12.dp,
             bottom = padding.calculateBottomPadding() + 20.dp,
         ),
-        verticalArrangement = Arrangement.spacedBy(22.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Har section ek rounded card: icon tile + title (+ subtitle) + control. Sab rows ek hi pattern follow karti hain.
         item {
-            SettingsSection(stringResource(R.string.settings_appearance)) {
-                SettingRow(Icons.Outlined.Palette, TintTheme, stringResource(R.string.settings_theme)) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(
-                            "system" to R.string.theme_system,
-                            "light" to R.string.theme_light,
-                            "dark" to R.string.theme_dark,
-                        ).forEach { (value, labelRes) ->
-                            FilterChip(
-                                selected = theme == value,
-                                onClick = { onTheme(value) },
-                                label = { Text(stringResource(labelRes)) },
-                            )
-                        }
-                    }
+            SettingTitle(Icons.Filled.Edit, stringResource(R.string.settings_appearance))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(start = SettingIndent, top = 8.dp),
+            ) {
+                listOf(
+                    "system" to R.string.theme_system,
+                    "light" to R.string.theme_light,
+                    "dark" to R.string.theme_dark,
+                ).forEach { (value, labelRes) ->
+                    val label = stringResource(labelRes)
+                    if (theme == value) Button(onClick = { onTheme(value) }) { Text(label) }
+                    else OutlinedButton(onClick = { onTheme(value) }) { Text(label) }
                 }
-                SettingDivider()
-                SettingRow(
-                    Icons.Outlined.GridView,
-                    TintGrid,
-                    stringResource(R.string.settings_grid_columns, columns.coerceAtLeast(2)),
-                    subtitle = stringResource(R.string.settings_pinch_hint),
-                ) {
-                    Slider(
-                        value = columns.coerceIn(2, 8).toFloat(),
-                        onValueChange = { onColumns(it.toInt().coerceIn(2, 8)) },
-                        valueRange = 2f..8f,
-                        steps = 5,
+            }
+        }
+        item {
+            HorizontalDivider()
+            SettingTitle(ImageVector.vectorResource(R.drawable.ic_photos), stringResource(R.string.settings_grid_columns, columns.coerceAtLeast(2)))
+            Slider(
+                value = columns.coerceIn(2, 8).toFloat(),
+                onValueChange = { onColumns(it.toInt().coerceIn(2, 8)) },
+                valueRange = 2f..8f,
+                steps = 5,
+                modifier = Modifier.padding(start = SettingIndent),
+            )
+            Text(
+                stringResource(R.string.settings_pinch_hint),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(start = SettingIndent),
+            )
+        }
+        item {
+            HorizontalDivider()
+            SettingTitle(SortIcon, stringResource(R.string.settings_default_sort))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(start = SettingIndent, top = 8.dp),
+            ) {
+                listOf(
+                    GallerySort.DATE_NEWEST to R.string.sort_newest,
+                    GallerySort.DATE_OLDEST to R.string.sort_oldest,
+                    GallerySort.NAME to R.string.sort_name,
+                    GallerySort.SIZE_LARGEST to R.string.sort_largest,
+                ).forEach { (value, labelRes) ->
+                    FilterChip(selected = sort == value, onClick = { onSort(value) }, label = { Text(stringResource(labelRes)) })
+                }
+            }
+        }
+        item {
+            HorizontalDivider()
+            SettingTitle(RepeatIcon, stringResource(R.string.settings_slideshow_speed))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(start = SettingIndent, top = 8.dp),
+            ) {
+                listOf(2000, 3000, 5000, 8000).forEach { ms ->
+                    FilterChip(
+                        selected = slideshowMs == ms,
+                        onClick = { onSlideshowMs(ms) },
+                        label = { Text(stringResource(R.string.settings_seconds, (ms / 1000).toString())) },
                     )
                 }
             }
         }
         item {
-            SettingsSection(stringResource(R.string.settings_gallery)) {
-                SettingRow(SortIcon, TintSort, stringResource(R.string.settings_default_sort)) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(
-                            GallerySort.DATE_NEWEST to R.string.sort_newest,
-                            GallerySort.DATE_OLDEST to R.string.sort_oldest,
-                            GallerySort.NAME to R.string.sort_name,
-                            GallerySort.SIZE_LARGEST to R.string.sort_largest,
-                        ).forEach { (value, labelRes) ->
-                            FilterChip(
-                                selected = sort == value,
-                                onClick = { onSort(value) },
-                                label = { Text(stringResource(labelRes)) },
-                            )
-                        }
-                    }
-                }
-                SettingDivider()
-                SettingRow(Icons.Outlined.Slideshow, TintSlideshow, stringResource(R.string.settings_slideshow_speed)) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(2000, 3000, 5000, 8000).forEach { ms ->
-                            FilterChip(
-                                selected = slideshowMs == ms,
-                                onClick = { onSlideshowMs(ms) },
-                                label = { Text(stringResource(R.string.settings_seconds, (ms / 1000).toString())) },
-                            )
-                        }
-                    }
-                }
-                SettingDivider()
-                SettingSwitchRow(Icons.Outlined.Vibration, TintHaptics, stringResource(R.string.settings_haptics), haptics, onHaptics)
-            }
+            HorizontalDivider()
+            SettingTitle(PipIcon, stringResource(R.string.settings_video))
+            SettingSwitchRow(Icons.Filled.PlayArrow, stringResource(R.string.settings_video_autoplay), videoAutoplay, onVideoAutoplay)
+            SettingSwitchRow(if (videoMuted) VolumeOffIcon else VolumeUpIcon, stringResource(R.string.settings_video_muted), videoMuted, onVideoMuted)
         }
         item {
-            SettingsSection(stringResource(R.string.settings_video)) {
-                SettingSwitchRow(
-                    Icons.Outlined.PlayArrow, TintAutoplay,
-                    stringResource(R.string.settings_video_autoplay), videoAutoplay, onVideoAutoplay,
-                )
-                SettingDivider()
-                SettingSwitchRow(
-                    Icons.Outlined.VolumeOff, TintMuted,
-                    stringResource(R.string.settings_video_muted), videoMuted, onVideoMuted,
-                )
-            }
+            HorizontalDivider()
+            SettingSwitchRow(Icons.Filled.CheckCircle, stringResource(R.string.settings_haptics), haptics, onHaptics)
         }
         item {
-            SettingsSection(stringResource(R.string.nav_trash)) {
-                SettingNavRow(
-                    Icons.Outlined.Delete, TintTrash,
-                    stringResource(R.string.settings_trash_open),
-                    count = trashCount,
-                    onClick = onOpenTrash,
-                    subtitle = stringResource(
-                        R.string.settings_trash_hint,
-                        (GalleryPreferences.TRASH_RETENTION_MS / 86_400_000L).toInt(),
-                    ),
-                )
-            }
-        }
-        item {
-            SettingsSection(
-                title = stringResource(R.string.settings_private_albums),
-                footer = stringResource(R.string.settings_private_hint),
-            ) {
-                SettingNavRow(
-                    Icons.Outlined.VisibilityOff, TintHidden,
-                    stringResource(R.string.hidden_albums), count = hiddenCount, onClick = onOpenHidden,
-                )
-                SettingDivider()
-                SettingNavRow(
-                    Icons.Outlined.Lock, TintLocked,
-                    stringResource(R.string.locked_albums), count = lockedCount, onClick = onOpenLocked,
-                )
-            }
-        }
-    }
-}
-
-// Section ke icon tile ke rang (tile = halka tint background + wahi rang ka icon; light/dark dono me padhne layak).
-private val TintTheme = Color(0xFF8E6CEF)
-private val TintGrid = Color(0xFF3B82F6)
-private val TintSort = Color(0xFF14B8A6)
-private val TintSlideshow = Color(0xFFF59E0B)
-private val TintHaptics = Color(0xFF22C55E)
-private val TintAutoplay = Color(0xFFEF4444)
-private val TintMuted = Color(0xFFEC4899)
-private val TintTrash = Color(0xFFEF4444)
-private val TintHidden = Color(0xFF64748B)
-private val TintLocked = Color(0xFFF97316)
-
-/** Section ka naam upar, neeche rounded card. footer = card ke neeche chhota hint. */
-@Composable
-private fun SettingsSection(
-    title: String,
-    footer: String? = null,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(
-            title,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
-        )
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(content = content)
-        }
-        if (footer != null) {
+            HorizontalDivider()
+            SettingTitle(Icons.Filled.Delete, stringResource(R.string.nav_trash))
             Text(
-                footer,
+                stringResource(R.string.settings_trash_hint, (GalleryPreferences.TRASH_RETENTION_MS / 86_400_000L).toInt()),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+                modifier = Modifier.padding(start = SettingIndent),
             )
         }
-    }
-}
-
-@Composable
-private fun SettingDivider() {
-    // Icon tile ke baad se shuru (16 + 38 + 14 = 68dp), taaki line text ke saath align ho.
-    HorizontalDivider(
-        modifier = Modifier.padding(start = 68.dp),
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-    )
-}
-
-@Composable
-private fun IconTile(icon: ImageVector, tint: Color) {
-    Box(
-        Modifier
-            .size(38.dp)
-            .clip(RoundedCornerShape(11.dp))
-            .background(tint.copy(alpha = 0.16f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
-    }
-}
-
-/**
- * Ek setting row: [icon tile] title (+ subtitle) [trailing]. content = title ke neeche (title ke saath align) controls:
- * chips, slider wagairah. Click/toggle modifier caller deta hai taaki poori row (ripple ke saath) tappable ho.
- */
-@Composable
-private fun SettingRow(
-    icon: ImageVector,
-    tint: Color,
-    title: String,
-    modifier: Modifier = Modifier,
-    subtitle: String? = null,
-    trailing: (@Composable RowScope.() -> Unit)? = null,
-    content: (@Composable ColumnScope.() -> Unit)? = null,
-) {
-    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconTile(icon, tint)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge)
-                if (subtitle != null) {
-                    Text(
-                        subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            trailing?.invoke(this)
-        }
-        if (content != null) {
-            Column(Modifier.padding(top = 10.dp, start = 52.dp), content = content)
-        }
-    }
-}
-
-@Composable
-private fun SettingSwitchRow(
-    icon: ImageVector,
-    tint: Color,
-    title: String,
-    checked: Boolean,
-    onChange: (Boolean) -> Unit,
-) {
-    SettingRow(
-        icon, tint, title,
-        // toggleable + Role.Switch: TalkBack ek hi "switch" bolta hai; Switch khud click nahi leta.
-        modifier = Modifier.toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
-        trailing = { Switch(checked = checked, onCheckedChange = null) },
-    )
-}
-
-@Composable
-private fun SettingNavRow(
-    icon: ImageVector,
-    tint: Color,
-    title: String,
-    count: Int,
-    onClick: () -> Unit,
-    subtitle: String? = null,
-) {
-    SettingRow(
-        icon, tint, title,
-        modifier = Modifier.clickable(role = Role.Button, onClick = onClick),
-        subtitle = subtitle,
-        trailing = {
+        item { SummaryRow(Icons.Filled.Delete, stringResource(R.string.settings_trash_open), trashCount, onOpenTrash) }
+        item {
+            HorizontalDivider()
+            SettingTitle(Icons.Filled.Lock, stringResource(R.string.settings_private_albums))
             Text(
-                count.toString(),
-                style = MaterialTheme.typography.bodyLarge,
+                stringResource(R.string.settings_private_hint),
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = SettingIndent),
             )
-            Icon(
-                Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        },
-    )
+        }
+        item { SummaryRow(ImageVector.vectorResource(R.drawable.ic_albums), stringResource(R.string.hidden_albums), hiddenCount, onOpenHidden) }
+        item { SummaryRow(Icons.Filled.Lock, stringResource(R.string.locked_albums), lockedCount, onOpenLocked) }
+    }
+}
+
+@Composable
+private fun SettingSwitchRow(icon: ImageVector, label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onChange(!checked) }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SettingIcon(icon)
+        Spacer(Modifier.width(16.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun SummaryRow(icon: ImageVector, label: String, count: Int, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SettingIcon(icon)
+        Spacer(Modifier.width(16.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.weight(1f))
+        Text(
+            "$count  ›",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 /**

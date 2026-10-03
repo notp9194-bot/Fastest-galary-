@@ -88,8 +88,6 @@
     <string name="auth_title">निजी एल्बम खोलें</string>
     <string name="auth_subtitle">अपने डिवाइस की पहचान की पुष्टि करें</string>
     <string name="settings_appearance">दिखावट</string>
-    <string name="settings_theme">थीम</string>
-    <string name="settings_gallery">गैलरी</string>
     <string name="theme_system">सिस्टम</string>
     <string name="theme_light">लाइट</string>
     <string name="theme_dark">डार्क</string>
