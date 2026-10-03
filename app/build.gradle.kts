@@ -31,8 +31,8 @@ android {
         applicationId = "com.fastgallery.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 40
-        versionName = "1.4.34"
+        versionCode = 46
+        versionName = "1.4.40"
     }
 
     signingConfigs {
@@ -78,10 +78,15 @@ android {
 }
 
 dependencies {
-    implementation(platform("androidx.compose:compose-bom:2024.09.03"))
+    // BOM 2026.06.01 = Compose 1.11.x (lazy-grid prefetch/scroll perf). 2026.08.00+ (Compose 1.12) ke liye
+    // compileSdk 37 + AGP 9 chahiye, isliye abhi yahin ruke hain.
+    implementation(platform("androidx.compose:compose-bom:2026.06.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
+    // Icons.Default.* (Close, Lock, PlayArrow...) core icons se aate hain; material3 ki transitive dependency par
+    // bharosa nahi, isliye seedha (BOM se version).
+    implementation("androidx.compose.material:material-icons-core")
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.core:core-splashscreen:1.0.1")

@@ -7,14 +7,20 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
 import coil.decode.GifDecoder
-import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.fastgallery.app.data.GalleryPreferences
 import com.fastgallery.app.ui.ThumbData
 import com.fastgallery.app.ui.ThumbFetcher
 import com.fastgallery.app.ui.ThumbKeyer
 
-/** A shared ImageLoader with cache budgets scaled for low-memory devices. */
+/**
+ * A shared ImageLoader with a memory cache scaled for low-memory devices.
+ *
+ * Disk cache jaan-boojh ke band hai (`diskCache(null)`): Coil ka disk cache sirf network fetcher
+ * (HttpUriFetcher) bharta hai. Yahan ke thumbnails `ThumbFetcher` (MediaStore.loadThumbnail, jiska apna
+ * system cache hai) ya local content:// decode se aate hain, jo Coil ke disk cache ko kabhi nahi chhute,
+ * to purana 192 MB `cache/thumbs` hamesha khali tha. Null na dene par Coil 2.7 khud default disk cache banata.
+ */
 class GalleryApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
@@ -22,6 +28,8 @@ class GalleryApp : Application(), ImageLoaderFactory {
         Thread {
             GalleryPreferences.theme(this)
             Coil.imageLoader(this)
+            // Purane versions ka khali disk-cache folder hata do (bachi hui journal files wagairah).
+            cacheDir.resolve("thumbs").takeIf { it.exists() }?.deleteRecursively()
         }.apply { name = "gallery-warmup"; priority = Thread.NORM_PRIORITY - 1 }.start()
     }
 
@@ -29,7 +37,6 @@ class GalleryApp : Application(), ImageLoaderFactory {
         val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
         val lowRam = activityManager.isLowRamDevice
         val memoryCachePercent = if (lowRam) 0.10 else 0.20
-        val diskCacheBytes = if (lowRam) 96L else 192L
 
         return ImageLoader.Builder(this)
             .components {
@@ -39,12 +46,7 @@ class GalleryApp : Application(), ImageLoaderFactory {
                 add(GifDecoder.Factory())
             }
             .memoryCache { MemoryCache.Builder(this).maxSizePercent(memoryCachePercent).build() }
-            .diskCache {
-                DiskCache.Builder()
-                    .directory(cacheDir.resolve("thumbs"))
-                    .maxSizeBytes(diskCacheBytes * 1024L * 1024L)
-                    .build()
-            }
+            .diskCache(null)
             .allowRgb565(true)
             .crossfade(false)
             .respectCacheHeaders(false)

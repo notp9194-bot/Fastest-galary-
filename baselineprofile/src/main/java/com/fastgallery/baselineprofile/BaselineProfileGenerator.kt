@@ -41,6 +41,12 @@ class BaselineProfileGenerator {
         startActivityAndWait()
         device.wait(Until.hasObject(By.text("Photos")), 5_000)
 
+        // 0) Dusri cold start: pehli launch ne pehle-page cache file bana di, ab cache se turant grid
+        // (FirstPageCache.read -> fromCache state -> asli refresh) wala path profile me aayega.
+        killProcess()
+        startActivityAndWait()
+        device.wait(Until.hasObject(By.text("Photos")), 5_000)
+
         // 1) Photos grid scroll + fast scroll wapas upar
         repeat(3) { swipeUp() }
         repeat(2) { swipeDown() }

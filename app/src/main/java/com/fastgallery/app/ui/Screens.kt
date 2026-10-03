@@ -3,6 +3,7 @@ package com.fastgallery.app.ui
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -51,6 +53,7 @@ import androidx.compose.ui.unit.IntOffset
 import android.widget.OverScroller
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -105,9 +108,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.imageLoader
+import coil.request.Disposable
 import com.fastgallery.app.R
 import com.fastgallery.app.data.Album
 import com.fastgallery.app.data.GridEntry
+import com.fastgallery.app.data.GridModel
 import com.fastgallery.app.data.MediaItem
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
@@ -129,6 +135,7 @@ import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.scrollBy
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.awaitCancellation
 import kotlin.math.pow
 
 @Composable
@@ -178,6 +185,9 @@ fun effectiveColumns(columns: Int, screenWidthDp: Int): Int {
 
 private const val MIN_COLUMNS = 2
 private const val MAX_COLUMNS = 8
+
+/** Slow scroll me scroll ki disha me itni rows ke thumbnails pehle se memory-cache me (0 = prefetch band). */
+private const val PREFETCH_ROWS = 2
 
 /**
  * Pull-to-refresh: grid ke top pe neeche kheencho to MediaStore dobara load hota hai.
@@ -236,8 +246,13 @@ fun MediaGrid(
     /** Favorite items ke keys: grid me heart badge. */
     favoriteKeys: Set<String> = emptySet(),
     flingFriction: Float = 0.015f,
-    contentVersion: Long,
-    resetKey: Any = Unit,
+    /** Background me bana grid data (entries, day groups, header positions): composition me kuch banta nahi. */
+    model: GridModel,
+    /**
+     * Scroll state bahar se: caller tab ke hisaab se alag state deta hai, taaki tab badalkar wapas aane par
+     * position wahin mile. Filter/sort/search badalne par top pe wapas le jaana caller ka kaam hai.
+     */
+    gridState: LazyGridState = rememberLazyGridState(),
     sort: GallerySort = GallerySort.DATE_NEWEST,
     /** index + tapped thumbnail ka window rect (viewer open-transition ke liye; na mile to null). */
     onOpen: (Int, Rect?) -> Unit,
@@ -253,28 +268,12 @@ fun MediaGrid(
     /** Viewer ke close-transition ke liye: koi bhi index ki thumbnail ka rect yahan se milta hai. */
     originLookup: GridOriginLookup? = null,
 ) {
-    val entries = remember(contentVersion) { com.fastgallery.app.data.buildEntries(items) }
-    // Header key -> us header ke neeche ke media keys (agle header tak). Date sort me ek din, Name/Size sort me ek run.
-    val dayGroups = remember(entries) {
-        val map = HashMap<Any, List<String>>()
-        var headerKey: Any? = null
-        var current = ArrayList<String>()
-        for (e in entries) {
-            when (e) {
-                is GridEntry.Header -> {
-                    headerKey?.let { map[it] = current }
-                    headerKey = e.key
-                    current = ArrayList()
-                }
-                is GridEntry.Media -> current.add(e.item.key)
-            }
-        }
-        headerKey?.let { map[it] = current }
-        map
-    }
-    val gridState = rememberLazyGridState()
+    val entries = model.entries
+    val dayGroups = model.dayGroups
     // Fast scroll me (fling / scrubber jump) naye cells grey placeholder rehte hain; ruk ke thumbnail load hote hain.
     val fastScrolling = rememberFastScrolling(gridState)
+    // Lambda (value nahi): Thumb ise composition me nahi padhta, to fling shuru/band par saare cells recompose nahi hote.
+    val deferThumbLoad = remember(fastScrolling) { { fastScrolling.value } }
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val currentSelected by rememberUpdatedState(selected)
@@ -303,6 +302,44 @@ fun MediaGrid(
     }
     // Viewer ki placeholder thumbnail isi size se mangti hai => grid ki memory-cache entry hit hoti hai.
     SideEffect { lastGridThumbPx = thumbPx }
+    // Slow scroll / ruke grid me scroll ki disha me agli PREFETCH_ROWS rows ke thumbnails memory-cache me pehle se
+    // bhar do (API 29+: MediaStore ke system-cached thumbs, sasta). Fast scroll shuru hote hi (ya naya position aate hi)
+    // pichhle prefetch cancel; wahi cells ab dikhne lagte hain to unki apni request chalti hai.
+    val prefetchCtx = LocalContext.current
+    LaunchedEffect(gridState, thumbPx, gridColumns) {
+        if (Build.VERSION.SDK_INT < 29) return@LaunchedEffect
+        val loader = prefetchCtx.imageLoader
+        snapshotFlow {
+            val visible = gridState.layoutInfo.visibleItemsInfo
+            when {
+                fastScrolling.value || visible.isEmpty() -> null
+                gridState.lastScrolledForward -> visible.last().index + 1
+                else -> visible.first().index - 1
+            }?.let { it to gridState.lastScrolledForward }
+        }.distinctUntilChanged().collectLatest { target ->
+            if (target == null) return@collectLatest
+            val (from, forward) = target
+            val list = currentEntries
+            val pending = ArrayList<Disposable>()
+            try {
+                var queued = 0
+                var i = from
+                val limit = PREFETCH_ROWS * gridColumns
+                while (queued < limit && i in list.indices) {
+                    (list[i] as? GridEntry.Media)?.let { m ->
+                        queued++
+                        if (!isThumbCached(prefetchCtx, m.item.uri, thumbPx)) {
+                            pending += loader.enqueue(thumbImageRequest(prefetchCtx, m.item.uri, thumbPx))
+                        }
+                    }
+                    i += if (forward) 1 else -1
+                }
+                awaitCancellation()
+            } finally {
+                pending.forEach { it.dispose() }
+            }
+        }
+    }
     // Live pinch: ungliyon ke saath grid smoothly scale hota hai; scale limit paar hote hi columns badalte hain
     // aur scale ko compensate kar dete hain (cell ka size continuous rehta hai). Chhodne par scale 1 pe settle.
     var pinchScale by remember { mutableFloatStateOf(1f) }
@@ -313,9 +350,7 @@ fun MediaGrid(
     val animateItems by remember { derivedStateOf { pinchScale == 1f } }
     // Sticky date header: LazyVerticalGrid me stickyHeader nahi hai, isliye content area ke top pe full-width overlay.
     // Abhi ka (pinned) header hamesha top pe rehta hai; agla header upar aate hi use dheere se upar dhakel deta hai.
-    val headerIndices = remember(entries) {
-        entries.indices.filter { entries[it] is GridEntry.Header }.toIntArray()
-    }
+    val headerIndices = model.headerIndices
     // Pinned header = aakhri header jiska index pehle visible item se pehle (ya barabar) hai.
     val stickyHeaderIndex by remember(headerIndices) {
         derivedStateOf {
@@ -349,8 +384,6 @@ fun MediaGrid(
             }
         }
     }
-    // Filter/sort/search badalne par naye result top se dikhao.
-    LaunchedEffect(resetKey) { gridState.scrollToItem(0) }
     LaunchedEffect(gridState, items.size) {
         snapshotFlow {
             gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
@@ -596,7 +629,7 @@ fun MediaGrid(
                         selected = entry.item.key in selected,
                         favorite = entry.item.key in favoriteKeys,
                         onClick = {
-                            if (selected.isNotEmpty()) onToggleSelection(entry.item)
+                            if (currentSelected.isNotEmpty()) onToggleSelection(entry.item)
                             else {
                                 val info = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == entry.item.key }
                                 val rect = info?.let {
@@ -617,7 +650,7 @@ fun MediaGrid(
                         },
                         onLongClick = { onToggleSelection(entry.item) },
                         longPressHandledByGrid = true,
-                        deferLoad = fastScrolling.value,
+                        deferLoad = deferThumbLoad,
                     )
                 }
             }

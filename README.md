@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.34
+# Fast Gallery 1.4.40
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -50,6 +50,90 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - `docs/privacy-policy.html` (+ `play-store/PRIVACY_POLICY.md`): privacy policy. GitHub Pages se `/docs` host karo. `[DEVELOPER NAME]` aur `[CONTACT EMAIL]` bharna baaki hai.
 - `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
 - `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
+
+## Updates in 1.4.40
+
+- **Compose BOM upgrade (P3 #3)**: `2024.09.03` -> `2026.06.01` (Compose 1.11.x, material3 1.4.0). Latest BOM `2026.09.00` (Compose 1.12) jaan-boojh ke nahi liya: Compose 1.12 ke liye compileSdk 37 + AGP 9 chahiye (abhi AGP 8.11.1 / compileSdk 36). Saath me `material-icons-core` seedha dependency me (BOM se version), taaki `Icons.Default.*` material3 ki transitive dependency par na tike.
+  - **Build yahan nahi chali.** Pehli build me dhyan do: agar Gradle "incompatible version of Kotlin / metadata version" error de to root `build.gradle.kts` me `org.jetbrains.kotlin.android` aur `org.jetbrains.kotlin.plugin.compose` dono ko `2.2.20` (same version) kar do. Material3 1.3 -> 1.4 me kuch visual/behavior farak ho sakte hain (dialogs, sheets, chips): ek baar screens haath se dekh lo.
+- **Baseline Profile (P3 #4)**: asli profile generate NAHI hua, kyunki ye device/emulator maangta hai jo yahan nahi tha. `baseline-prof.txt` hand-curated hi hai (bas `ScrollPlaceholder` class add ki, jo pehle scroll par chalti hai). Device par ye chalao, phir `app/src/main/generated/baselineProfiles/` commit karke `baseline-prof.txt` delete kar do:
+  ```sh
+  ./gradlew :app:generateBaselineProfile
+  ```
+  Device me kam se kam kuch photos aur 1 video hona chahiye (generator inhi par chalta hai).
+- **Thumbnail loading tune (P3 #5)**:
+  - `ThumbFetcher`: `loadThumbnail` par `Semaphore(MAX_PARALLEL_THUMB_LOADS = 8)`. Dhyan do: code me pehle koi limit nahi thi (Coil ka default IO dispatcher 64 threads tak jaata hai), to ye limit lagana hai, "6 se 8" karna nahi. Maksad: fast scroll me MediaProvider ke Binder pool ko na bharna.
+  - `ThumbFetcher`: request cancel hone par (cell scroll se nikal gaya) `CancellationSignal` se chalta hua `loadThumbnail` bhi rukta hai, Binder thread jaldi khali.
+  - Slow scroll prefetch: `MediaGrid` scroll ki disha me agli `PREFETCH_ROWS = 2` rows ke thumbnails memory-cache me pehle se enqueue karta hai (API 29+). Fast scroll shuru hote hi ya naya position aate hi pichhle prefetch cancel. `thumbImageRequest()` display aur prefetch dono share karte hain, taaki cache key same rahe.
+  - Teeno sirf naap ke rakho: `ScrollBenchmarks` (`:baselineprofile`, `FrameTimingMetric`) se pehle purane build ka number lo, phir naya. Fayda na dikhe to `MAX_PARALLEL_THUMB_LOADS` bada kar do (jaise 64) aur `PREFETCH_ROWS = 0` kar do = pehle jaisa.
+- **Grid recompose kam (P3)**: (1) `Thumb(deferLoad)` ab `() -> Boolean` hai; fast-scroll State composition me nahi padha jata, pehle har fling shuru/band par saare visible cells recompose hote the. Ab sirf abhi tak grey cell `snapshotFlow` se intezaar karta hai. Behavior wahi: ek baar load hua cell wapas grey nahi hota. (2) Cell ke `onClick` me `selected` Set ki jagah `currentSelected` (`rememberUpdatedState`): pehle har selection badlav (drag-select ke har step) par saare visible cells ki lambda badalti thi aur wo recompose hote the.
+- **`formatDuration` sasta (P3)**: `String.format` (har call par Formatter allocate) hata ke `StringBuilder`; video cell me `remember(item.durationMs)` taaki recompose par dobara na bane. Output wahi (`m:ss`, `h:mm:ss`), test `FormatDurationTest`. Farak: ab hamesha ASCII digits (pehle `String.format` locale ke digits deta tha).
+- **Badge allocations (P3)**: video/GIF/RAW badge ka `RoundedCornerShape(6.dp)` aur scrim color top-level constants (`BadgeShape`, `BadgeScrim`): pehle har badge-wale cell ke har recompose par naya shape banta tha. `stringResource(typeBadge)` aur `semantics {}` lambda jaan-boojh ke nahi chheda (resource lookup sasta hai, semantics lambda cell-specific hai).
+- **`MediaItem.key` stored (P3)**: getter `uri.toString()` ki jagah ek baar bana `val`. Grid key lambda, `selected`/`favoriteKeys` lookups aur viewer isse bahut baar padhte hain. Equality/hashCode par asar nahi (body property).
+- Version: `versionName` 1.4.40 / `versionCode` 46.
+
+Build/tests yahan nahi chale (network aur device nahi tha). Release/profileable build par Macrobenchmark se hi asli numbers milenge.
+
+## Updates in 1.4.39
+
+- **System trash query ka wait hata (load)**: pehle `load()` pehle page ke baad `queryTrashed()` (5000 rows tak) sequentially chalata tha aur dono ke baad hi state publish hoti thi, yaani cache ke baad `fromCache=false` (tap allow) bhi trash query tak rukta tha. Ab:
+  - `queryTrashed()` `async` me pehle page ke saath parallel chalti hai (ek `coroutineScope`, cancel dono ko cancel karta hai).
+  - Page aate hi state publish (tap/open allow, cache save). Trash baad me `_state.update { trashItems, trashLoaded = true }`.
+  - `GalleryState.trashLoaded`: jab tak false, Trash tab skeleton dikhata hai (galat "Trash khali" flash nahi). Refresh me true hi rehta hai. Query fail par bhi true.
+- **`buildEntries` main thread se hata (grid data)**: `MediaGrid` composition me `buildEntries` + day groups (har item ka key) + header indices banata tha; 6000+ library par sort/filter/loadAll pe ek frame drop. Ab ye sab `buildGridModel(items)` (`data/Models.kt`, `GridModel`) me `GalleryViewModel.displayItems` ke `Dispatchers.Default` block me banta hai; `GalleryDisplayResult.model` me aata hai, `MediaGrid(model = ...)` bas use karta hai. `contentVersion` param hat gaya (model hi naya object hai). `buildEntries` wahi hai (tests/doosre users).
+- Tests: `GridModelTest` (empty, entries == buildEntries, header indices, day groups).
+- Version: `versionName` 1.4.39 / `versionCode` 45.
+
+Build/tests yahan nahi chale. Naapo: (1) cold start me cache dikhne ke baad kitni jaldi tap chalta hai (pehle trash query tak rukta tha); (2) bade library (3000+) par sort badalte waqt frame time (Macrobenchmark `FrameTimingMetric`).
+
+## Updates in 1.4.38
+
+- **Tab switch par scroll position (P4, UX fix)**: pehle tab badalte hi `MediaGrid` dispose hota tha aur uska `LazyGridState` kho jaata tha, wapas aane par grid top se shuru hota tha. Ab `GalleryContent` (`MainActivity.kt`) me state hoist hai:
+  - Alag state: Photos, Favorites, Trash (`rememberLazyGridState`, rotation/recreate me bachta hai) aur album ka (`rememberSaveable(albumId)`: album badalne par naya, wahi album dobara kholne par top se).
+  - `MediaGrid(gridState = ...)` ab state bahar se leta hai (default pehle jaisa). Andar ka `LaunchedEffect(resetKey) { scrollToItem(0) }` hata diya, warna wo har entry par position top pe kar deta.
+  - Filter/sort/search badalne par top pe jaana ab central hai: `LaunchedEffect(sort, filter, search)` sab 4 states ko top pe karta hai (sort Settings tab se bhi badalta hai jahan grid composed hi nahi hota). Pehli composition me skip, taaki restore na tute.
+  - Tab-swipe code (`TabSwipe.kt`) ko haath nahi lagaya.
+  - Limit: Albums list (`AlbumsGrid`) aur album se wapas Albums list par aane par uski position abhi bhi restore nahi hoti (alag grid hai, scope se bahar rakha).
+- Version: `versionName` 1.4.38 / `versionCode` 44.
+
+Build/tests yahan nahi chale. Ye speed nahi UX fix hai, to Macrobenchmark se fayda naapne ki zarurat nahi; bas haath se dekho: Photos me neeche scroll -> Favorites -> wapas Photos (position wahin), phir sort/filter badlo (top par jaana chahiye).
+
+## Updates in 1.4.37
+
+- **Thumbnail disk cache (P3)**: verify kiya (code se, device par nahi): 192 MB (low-RAM par 96 MB) Coil disk cache `cache/thumbs` kabhi bharta hi nahi tha. Coil 2.7 me disk cache sirf network fetcher (`HttpUriFetcher`) use karta hai. Grid ke thumbnails `ThumbFetcher` (`ContentResolver.loadThumbnail`, jiska MediaProvider ka apna cache hai) ya local content:// decode se aate hain, jo disk cache ko chhute nahi. `ThumbFetcher` ka `DataSource.DISK` sirf label hai.
+  - Fix: `GalleryApp` me `.diskCache(null)` (null na do to Coil default disk cache khud bana leta hai). Purana khali `cache/thumbs` folder warmup thread me delete hota hai. Memory cache jaisa tha waisa.
+  - Device par confirm karna ho (1.4.36 install par): `adb shell run-as com.fastgallery.app du -sh cache/thumbs` => ~0.
+  - Cold start par visible cells pehle: LazyGrid sirf visible cells (+1 line) compose karta hai aur koi thumbnail prefetch nahi hota, upar se fast-scroll `deferLoad` (1.4.34) pehle se hai. Is liye alag code nahi badla.
+  - Baseline profile: hand-curated `baseline-prof.txt` me `ui/Thumb**` (ThumbFetcher/Keyer), `GalleryViewModel**`, `FirstPageCache` pehle se covered. `BaselineProfileGenerator` me dusri cold start (kill + relaunch) joda, taaki cache se grid dikhne ka path bhi record ho. Asli profile device par `./gradlew :app:generateBaselineProfile` se dobara generate karke commit karo.
+- Tests: `GalleryAppImageLoaderTest` (disk cache null, memory cache present).
+- Version: `versionName` 1.4.37 / `versionCode` 43.
+
+Build/tests yahan nahi chale.
+
+## Updates in 1.4.36
+
+- **Cold start: pehle page ka cache (P2)**: pehle 90 items ki snapshot (`data/FirstPageCache.kt`, `noBackupFilesDir/first_page.bin`, binary + version) disk par save hoti hai. Agli cold start par ye list turant dikhti hai (skeleton skip), aur MediaStore query background me chalti hai.
+  - Cache me id, type (image/video), dateAdded, bucketId, duration, name, mime, size, w/h; `uri` id + type se dobara banti hai. `bucketId` zaroori hai: hidden/locked album ki photos cache se bhi nahi dikhti (prefs: hidden, locked, trash, favorites cache ke saath hi load hote hain).
+  - `GalleryState.fromCache`: true tab tak jab tak asli query khatam na ho. Is dauran grid me tap/open, long-press selection, drag-select, day-select block hain (stale/delete hui photo na khule). Asli result aate hi cache wali list replace hoti hai, delete hui photos apne aap hat jaati hain.
+  - Cache ke dauran `hasMore = true` rehta hai: albums/favorites/search/sort partial 90 items ko poori library samajh ke nahi dikhate (skeleton dikhta hai), `loadNextPage`/`loadAll` asli refresh ke baad hi chalte hain.
+  - Race: cache sirf tab lagti hai jab asli load abhi kuch na laya ho (atomic `StateFlow.update`). Query fail ho to stale cache items hata di jaati hain.
+  - Cache har successful refresh me update hoti hai (same list ho to disk write skip). Library khali ho to cache clear.
+  - Splash: `state.loading` cache hit par kuch ms me false ho jaata hai, to 700 ms wait sirf tab lagta hai jab cache nahi hai (pehli install / cache miss). Cap 700 ms hi rakha; Macrobenchmark se dekh ke kam karna ho to `MainActivity.onCreate` me.
+- Tests: `FirstPageCacheTest` (round trip, uri rebuild, limit, corrupt file, clear).
+- Version: `versionName` 1.4.36 / `versionCode` 42.
+
+Build/tests yahan nahi chale. Naapne ke liye: cold start (`StartupBenchmarks`) me pehli iteration cache-miss hoti hai (file abhi bani nahi), isliye 1-2 warm-up run ke baad time-to-first-thumbnail / `timeToInitialDisplay` compare karo (pehle 1.4.35, ab 1.4.36).
+
+## Updates in 1.4.35
+
+- **Grid cell ka kaam kam (P1)**: pehle har `Thumb` cell composition me naya `DateFormat` banata tha aur 4 `stringResource` (description, Selected, Favorite, Select) resolve karta tha, scroll me hazaron baar. Ab:
+  - Ek shared `CachedDateFormatter` (`ui/ThumbDescription.kt`, `ThumbDateFormatter`): locale badalne tak ek hi `DateFormat` + ek hi `Date`. Main thread only.
+  - TalkBack labels (date wala description, Selected/Favorite state, "Select" action) ab `semantics { }` ke andar lazy bante hain, yaani tabhi jab semantics ko zarurat ho (TalkBack on / test). Spoken text pehle jaisa hi hai ("Photo, 12 Mar 2025" + state). Image ka `contentDescription` null, label parent ke merged semantics me.
+  - `thumbDateMillis()` pure function: dateTaken, warna dateAdded (sec -> ms).
+- Note: `DateFormat` timezone bante waqt hi pakadta hai; app chalte me timezone badle to naya locale/app restart tak purana tz reh sakta hai (sirf TalkBack label me, UI me date header alag se banta hai).
+- Tests: `ThumbDescriptionTest` (date fallback, ek hi formatter reuse, locale badalne par rebuild, Java MEDIUM format se match).
+- Version: `versionName` 1.4.35 / `versionCode` 41.
+
+Build/tests yahan nahi chale. Fayda naapna ho to Macrobenchmark / Profiler me grid scroll ka frame time pehle (1.4.34) aur ab (1.4.35) compare karo.
 
 ## Updates in 1.4.34
 

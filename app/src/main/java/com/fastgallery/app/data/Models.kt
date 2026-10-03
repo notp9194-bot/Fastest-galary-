@@ -26,8 +26,12 @@ data class MediaItem(
     /** System trash se auto-delete ka time (seconds); 0 = unknown. */
     val trashExpiresSec: Long = 0L,
 ) {
-    /** Images aur videos ke IDs collide ho sakte hain; URI is the stable cross-table key. */
-    val key: String get() = uri.toString()
+    /**
+     * Images aur videos ke IDs collide ho sakte hain; URI is the stable cross-table key.
+     * Stored (getter nahi): grid key lambda, selected/favorite lookups aur viewer har baar `uri.toString()` bulate the.
+     * Data class ke equals/hashCode/copy me nahi aata (constructor property nahi); `copy()` par uri ke hisaab se dobara banta hai.
+     */
+    val key: String = uri.toString()
 }
 
 data class Album(
@@ -77,6 +81,45 @@ fun buildEntries(items: List<MediaItem>): List<GridEntry> {
         out += GridEntry.Media(m, i)
     }
     return out
+}
+
+/**
+ * Grid ke liye taiyaar data: entries (headers + media), din-wise media keys aur header positions.
+ * Ye sab background thread par banta hai (`buildGridModel`), composition me nahi: bade (6000+) library par
+ * main thread pe ek frame drop hota tha.
+ */
+class GridModel(
+    val entries: List<GridEntry>,
+    /** Header key -> us header ke neeche ke media keys (agle header tak). */
+    val dayGroups: Map<Any, List<String>>,
+    /** Entries me header ke positions (sorted). */
+    val headerIndices: IntArray,
+) {
+    companion object {
+        val EMPTY = GridModel(emptyList(), emptyMap(), IntArray(0))
+    }
+}
+
+fun buildGridModel(items: List<MediaItem>): GridModel {
+    if (items.isEmpty()) return GridModel.EMPTY
+    val entries = buildEntries(items)
+    val dayGroups = HashMap<Any, List<String>>()
+    val headers = ArrayList<Int>()
+    var headerKey: Any? = null
+    var current = ArrayList<String>()
+    for ((i, e) in entries.withIndex()) {
+        when (e) {
+            is GridEntry.Header -> {
+                headerKey?.let { dayGroups[it] = current }
+                headerKey = e.key
+                current = ArrayList()
+                headers += i
+            }
+            is GridEntry.Media -> current.add(e.item.key)
+        }
+    }
+    headerKey?.let { dayGroups[it] = current }
+    return GridModel(entries, dayGroups, headers.toIntArray())
 }
 
 enum class GallerySort { DATE_NEWEST, DATE_OLDEST, NAME, SIZE_LARGEST }

@@ -101,6 +101,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -110,6 +112,7 @@ import com.fastgallery.app.data.GalleryPreferences
 import com.fastgallery.app.ui.SelectAllIcon
 import com.fastgallery.app.ui.SelectionActionBar
 import com.fastgallery.app.data.GallerySort
+import com.fastgallery.app.data.GridModel
 import com.fastgallery.app.data.MediaFilter
 import com.fastgallery.app.data.MediaItem
 import com.fastgallery.app.data.MediaOperations
@@ -148,7 +151,8 @@ class MainActivity : FragmentActivity() {
         val vm = ViewModelProvider(this)[GalleryViewModel::class.java]
         val access = hasMediaAccess(this)
         if (access) vm.refreshIfNeeded()
-        // Splash tab tak jab tak pehla page aa na jaye (skeleton ki jagah seedha photos), par 700ms se zyada nahi.
+        // Splash tab tak jab tak pehla page aa na jaye (disk cache ya MediaStore, jo pehle), par 700ms se zyada nahi.
+        // Cache hit pe state.loading kuch ms me false ho jaata hai, to splash 700ms tak rukta hi nahi.
         val splashStart = SystemClock.uptimeMillis()
         splash.setKeepOnScreenCondition {
             access && vm.state.value.loading && SystemClock.uptimeMillis() - splashStart < 700L
@@ -339,9 +343,29 @@ private fun GalleryContent(
         sort = sort,
         filter = filter,
     )
+    // Har grid-wali tab ka apna scroll state (Photos / Favorites / Trash), album ka alag (album badalne par naya).
+    // Tab badalkar wapas aane par position wahin milti hai; rotation / recreate me bhi bachti hai (saveable).
+    val photosGridState = rememberLazyGridState()
+    val favoritesGridState = rememberLazyGridState()
+    val trashGridState = rememberLazyGridState()
+    val albumGridState = rememberSaveable(albumId, saver = LazyGridState.Saver) { LazyGridState() }
+    // Filter/sort/search badalne par naye result top se dikhao: sab tabs ke states top pe (sort Settings tab se
+    // bhi badalta hai, tab grid composed nahi hota, isliye yahan central). Pehli composition me kuch nahi (restore na tute).
+    val gridResetFirstRun = remember { booleanArrayOf(true) }
+    LaunchedEffect(sort, filter, search) {
+        if (gridResetFirstRun[0]) {
+            gridResetFirstRun[0] = false
+            return@LaunchedEffect
+        }
+        photosGridState.scrollToItem(0)
+        favoritesGridState.scrollToItem(0)
+        trashGridState.scrollToItem(0)
+        albumGridState.scrollToItem(0)
+    }
     val displayContextStale =
         displayResult.query?.tab != tab || displayResult.query?.albumId != albumId
     val currentList = if (displayContextStale) emptyList() else displayResult.items
+    val currentModel = if (displayContextStale) GridModel.EMPTY else displayResult.model
     val needsCompleteLibrary = tab != 0 ||
         albumId != null ||
         search.isNotBlank() ||
@@ -880,6 +904,8 @@ private fun GalleryContent(
                 when {
                     !granted -> PermissionScreen(scaffoldPadding) { permissionLauncher.launch(mediaPermissions()) }
                     state.loading -> SkeletonGrid(columns, padding)
+                    // System trash ki query abhi baaki: "Trash khali" ka galat flash nahi, skeleton.
+                    tab == 3 && !state.trashLoaded -> SkeletonGrid(columns, padding)
                     needsCompleteLibrary && state.hasMore && tab != 4 -> SkeletonGrid(columns, padding)
                     tab == 4 && settingsPage == 1 -> ManagedAlbumsScreen(
                         padding = padding,
@@ -988,12 +1014,19 @@ private fun GalleryContent(
                         columns = columns,
                         favoriteKeys = state.favoriteKeys,
                         flingFriction = if (tab == 0) 0.007f else 0.015f,
-                        contentVersion = displayResult.version,
-                        resetKey = Triple(sort, filter, search),
+                        model = currentModel,
+                        gridState = when {
+                            albumId != null -> albumGridState
+                            tab == 2 -> favoritesGridState
+                            tab == 3 -> trashGridState
+                            else -> photosGridState
+                        },
                         sort = sort,
                         onScrubStart = vm::loadAll,
                         originLookup = gridOriginLookup,
                         onOpen = { index, rect ->
+                            // Cache wali (stale ho sakti) list: asli refresh hone tak open/pick nahi.
+                            if (state.fromCache) return@MediaGrid
                             if (pick != null) {
                                 // Picker: single me turant wapas, multiple me pehla item select (phir tap se toggle).
                                 val item = currentList.getOrNull(index)
@@ -1007,6 +1040,7 @@ private fun GalleryContent(
                             }
                         },
                         onToggleSelection = { item ->
+                            if (state.fromCache) return@MediaGrid
                             if (pick != null && !pick.multiple) {
                                 finishPick(listOf(item))
                             } else {
@@ -1014,13 +1048,13 @@ private fun GalleryContent(
                                 selected = if (item.key in selected) selected - item.key else selected + item.key
                             }
                         },
-                        onSetSelection = { if (pick == null || pick.multiple) selected = it },
+                        onSetSelection = { if (!state.fromCache && (pick == null || pick.multiple)) selected = it },
                         onPinchColumns = { next ->
                             columns = next.coerceIn(2, 8)
                             GalleryPreferences.setColumns(ctx, columns)
                         },
                         onLoadMore = vm::loadNextPage,
-                        daySelectEnabled = pick == null || pick.multiple,
+                        daySelectEnabled = !state.fromCache && (pick == null || pick.multiple),
                     ) }
                 }
             if (showFilterChip) {

@@ -14,6 +14,8 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.fastgallery.app.data.Album
+import com.fastgallery.app.data.FirstPageCache
+import com.fastgallery.app.data.GridModel
 import com.fastgallery.app.data.GalleryPreferences
 import com.fastgallery.app.data.GallerySort
 import com.fastgallery.app.data.MediaFilter
@@ -21,8 +23,11 @@ import com.fastgallery.app.data.MediaItem
 import com.fastgallery.app.data.MediaOperations
 import com.fastgallery.app.data.MediaRepository
 import com.fastgallery.app.data.buildAlbums
+import com.fastgallery.app.data.buildGridModel
 import com.fastgallery.app.data.matchesFilter
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -34,6 +39,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.launch
@@ -57,6 +63,16 @@ data class GalleryState(
     val unlockedAlbumId: Long? = null,
     val hiddenAlbumIds: Set<String> = emptySet(),
     val lockedAlbumIds: Set<String> = emptySet(),
+    /**
+     * true = items disk ki pehle-page cache se aaye hain (stale ho sakte hain). Asli MediaStore query
+     * khatam hone par false. Tab tak UI tap/open/select block karta hai.
+     */
+    val fromCache: Boolean = false,
+    /**
+     * System trash ki query (API 30+) ab pehle page ke baad alag se aati hai (tap/open usse nahi rukta).
+     * Jab tak false, Trash tab skeleton dikhata hai ("Trash khali hai" ka jhootha flash na aaye).
+     */
+    val trashLoaded: Boolean = false,
 )
 
 data class GalleryQuery(
@@ -70,6 +86,8 @@ data class GalleryQuery(
 data class GalleryDisplayResult(
     val query: GalleryQuery? = null,
     val items: List<MediaItem> = emptyList(),
+    /** `items` se bana grid data (headers, day groups): background me banta hai, UI bas dikhata hai. */
+    val model: GridModel = GridModel.EMPTY,
     /** Har naye derived result pe badhta hai; UI isse grid ke entries rebuild karta hai. */
     val version: Long = 0L,
 )
@@ -91,6 +109,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
 
     private val resolver = app.contentResolver
     private val repository = MediaRepository(resolver)
+    private val firstPageCache = FirstPageCache(app)
     private val _state = MutableStateFlow(GalleryState())
     val state: StateFlow<GalleryState> = _state.asStateFlow()
 
@@ -110,14 +129,15 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         gallery to query
     }
         .mapLatest { (gallery, query) ->
-            val items = withContext(Dispatchers.Default) {
-                if (requiresCompleteLibrary(query) && gallery.hasMore) {
+            val (items, model) = withContext(Dispatchers.Default) {
+                val derived = if (requiresCompleteLibrary(query) && gallery.hasMore) {
                     emptyList()
                 } else {
                     deriveDisplayItems(gallery, query)
                 }
+                derived to buildGridModel(derived)
             }
-            GalleryDisplayResult(query, items, displayVersion.incrementAndGet())
+            GalleryDisplayResult(query, items, model, displayVersion.incrementAndGet())
         }
 
     private val displayVersion = java.util.concurrent.atomic.AtomicLong(0L)
@@ -144,7 +164,59 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     init {
         resolver.registerContentObserver(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, observer)
         resolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, observer)
+        showCachedFirstPage()
     }
+
+    /**
+     * Cold start: pichhli baar ka pehla page disk se turant dikhao (asli query ka intezaar kiye bina).
+     * Sirf tab lagta hai jab asli load abhi tak kuch na laya ho; warna asli data hi jeetta hai.
+     * Hidden/locked/trash/favorite prefs bhi saath me load hote hain, taaki cache se private album
+     * ki photos ek pal ke liye bhi na dikhein.
+     */
+    private fun showCachedFirstPage() {
+        val app = getApplication<Application>()
+        if (!hasMediaAccess(app)) return
+        viewModelScope.launch {
+            val snapshot = withContext(Dispatchers.IO) {
+                val items = firstPageCache.read()?.takeIf { it.isNotEmpty() } ?: return@withContext null
+                CachedFirstPage(
+                    items = items,
+                    favorites = GalleryPreferences.favorites(app),
+                    trashKeys = GalleryPreferences.trashed(app),
+                    trashTimes = GalleryPreferences.trashTimes(app),
+                    hidden = GalleryPreferences.hiddenAlbums(app),
+                    locked = GalleryPreferences.lockedAlbums(app),
+                )
+            } ?: return@launch
+            // Atomic: asli load pehle aa chuka (loading == false) ya items aa chuke ho to cache skip.
+            _state.update { cur ->
+                if (cur.loading && cur.items.isEmpty()) {
+                    cur.copy(
+                        loading = false,
+                        hasMore = true, // abhi sirf pehla page; albums/search/sort ke liye poori library baaki
+                        items = snapshot.items,
+                        itemsVersion = cur.itemsVersion + 1,
+                        albums = emptyList(),
+                        favoriteKeys = snapshot.favorites,
+                        trashKeys = snapshot.trashKeys,
+                        trashTimes = snapshot.trashTimes,
+                        hiddenAlbumIds = snapshot.hidden,
+                        lockedAlbumIds = snapshot.locked,
+                        fromCache = true,
+                    )
+                } else cur
+            }
+        }
+    }
+
+    private class CachedFirstPage(
+        val items: List<MediaItem>,
+        val favorites: Set<String>,
+        val trashKeys: Set<String>,
+        val trashTimes: Map<String, Long>,
+        val hidden: Set<String>,
+        val locked: Set<String>,
+    )
 
     fun setQuery(query: GalleryQuery) {
         _query.value = query
@@ -181,39 +253,61 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = previous.copy(
             loading = previous.items.isEmpty(),
             loadingMore = false,
-            hasMore = false,
+            // Cache wali partial list pe hasMore true rehne do, warna albums/favorites partial data ko poora maan lenge.
+            hasMore = previous.fromCache,
         )
         pageJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 purgeExpiredFallbackTrash()
-                val page = repository.queryPage(offset = 0, pageSize = windowSize)
-                val systemTrash = repository.queryTrashed()
-                coroutineContext.ensureActive()
-                if (generation != loadGeneration) return@launch
-                val nextItems = page.items
-                _state.value = _state.value.copy(
-                    loading = false,
-                    loadingMore = false,
-                    hasMore = page.hasMore,
-                    items = nextItems,
-                    itemsVersion = _state.value.itemsVersion + 1,
-                    albums = if (page.hasMore) emptyList() else buildAlbums(nextItems),
-                    favoriteKeys = GalleryPreferences.favorites(getApplication()),
-                    trashKeys = GalleryPreferences.trashed(getApplication()),
-                    trashTimes = GalleryPreferences.trashTimes(getApplication()),
-                    trashItems = systemTrash,
-                    hiddenAlbumIds = GalleryPreferences.hiddenAlbums(getApplication()),
-                    lockedAlbumIds = GalleryPreferences.lockedAlbums(getApplication()),
-                )
-                lastSuccessfulRefreshMs = SystemClock.elapsedRealtime()
-                refreshPending = false
-                _refreshing.value = false
+                coroutineScope {
+                    // System trash query pehle page ke saath parallel chalti hai, par usse rukte nahi:
+                    // page aate hi publish (tap/open allow), trash baad me.
+                    val trashQuery = async { repository.queryTrashed() }
+                    val page = repository.queryPage(offset = 0, pageSize = windowSize)
+                    coroutineContext.ensureActive()
+                    if (generation != loadGeneration) return@coroutineScope
+                    val nextItems = page.items
+                    // Asli data aa gaya: cache wali list replace (delete hui photos hat jaati hain), tap allow.
+                    if (nextItems.isEmpty()) firstPageCache.clear()
+                    else firstPageCache.save(nextItems, FIRST_PAGE_SIZE)
+                    _state.value = _state.value.copy(
+                        fromCache = false,
+                        loading = false,
+                        loadingMore = false,
+                        hasMore = page.hasMore,
+                        items = nextItems,
+                        itemsVersion = _state.value.itemsVersion + 1,
+                        albums = if (page.hasMore) emptyList() else buildAlbums(nextItems),
+                        favoriteKeys = GalleryPreferences.favorites(getApplication()),
+                        trashKeys = GalleryPreferences.trashed(getApplication()),
+                        trashTimes = GalleryPreferences.trashTimes(getApplication()),
+                        hiddenAlbumIds = GalleryPreferences.hiddenAlbums(getApplication()),
+                        lockedAlbumIds = GalleryPreferences.lockedAlbums(getApplication()),
+                    )
+                    lastSuccessfulRefreshMs = SystemClock.elapsedRealtime()
+                    refreshPending = false
+                    _refreshing.value = false
+
+                    val systemTrash = trashQuery.await()
+                    coroutineContext.ensureActive()
+                    if (generation != loadGeneration) return@coroutineScope
+                    _state.update { it.copy(trashItems = systemTrash, trashLoaded = true) }
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 Log.e("GalleryViewModel", "Load failed", error)
                 if (generation == loadGeneration) {
-                    _state.value = _state.value.copy(loading = false, loadingMore = false)
+                    // Query fail hui: stale cache wali list dikhate rehna galat hoga, isliye hata do.
+                    val stale = _state.value.fromCache
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        loadingMore = false,
+                        fromCache = false,
+                        trashLoaded = true,
+                        items = if (stale) emptyList() else _state.value.items,
+                        hasMore = if (stale) false else _state.value.hasMore,
+                    )
                     _refreshing.value = false
                 }
             }
@@ -225,7 +319,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun loadNextPage() {
         val current = _state.value
-        if (current.loading || current.loadingMore || !current.hasMore) return
+        if (current.fromCache || current.loading || current.loadingMore || !current.hasMore) return
         pageJob?.cancel()
         val generation = loadGeneration
         val offset = current.items.size
@@ -253,7 +347,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun loadAll() {
         val current = _state.value
-        if (!current.hasMore || current.loading || current.loadingMore || loadAllJob?.isActive == true) return
+        if (current.fromCache || !current.hasMore || current.loading || current.loadingMore || loadAllJob?.isActive == true) return
         pageJob?.cancel()
         val generation = loadGeneration
         _state.value = current.copy(loadingMore = true)

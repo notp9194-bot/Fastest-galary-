@@ -40,6 +40,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.snapshots.Snapshot
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -48,6 +52,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -170,26 +175,36 @@ fun rememberViewerRequest(uri: Uri, size: Int): ImageRequest {
 }
 
 /**
- * Grid/album thumbs: API 29+ pe MediaStore ke system-cached thumbnails (full decode se bahut fast),
- * purane Android pe sampled Coil decode.
+ * Grid/album thumbs ki request: API 29+ pe MediaStore ke system-cached thumbnails (full decode se bahut fast),
+ * purane Android pe sampled Coil decode. Display (AsyncImage) aur prefetch dono yahi use karte hain, taaki
+ * memory-cache key same rahe.
  */
+fun thumbImageRequest(ctx: Context, uri: Uri, size: Int, fadeIn: Boolean = false): ImageRequest {
+    val data: Any = if (Build.VERSION.SDK_INT >= 29) ThumbData(uri, size) else uri
+    return ImageRequest.Builder(ctx)
+        .data(data)
+        .size(size)
+        .precision(Precision.INEXACT)
+        .apply { if (fadeIn) crossfade(THUMB_FADE_IN_MS) }
+        .build()
+}
+
 @Composable
 fun rememberThumbRequest(uri: Uri, size: Int, fadeIn: Boolean = false): ImageRequest {
     val ctx = LocalContext.current
-    return remember(uri, size, fadeIn) {
-        val data: Any = if (Build.VERSION.SDK_INT >= 29) ThumbData(uri, size) else uri
-        ImageRequest.Builder(ctx)
-            .data(data)
-            .size(size)
-            .precision(Precision.INEXACT)
-            .apply { if (fadeIn) crossfade(THUMB_FADE_IN_MS) }
-            .build()
-    }
+    return remember(uri, size, fadeIn) { thumbImageRequest(ctx, uri, size, fadeIn) }
 }
 
 /** Thumbnail memory-cache me pehle se hai? (API 29+ ka ThumbKeyer key; purane Android par pata nahi => false.) */
-private fun isThumbCached(ctx: Context, uri: Uri, size: Int): Boolean =
+internal fun isThumbCached(ctx: Context, uri: Uri, size: Int): Boolean =
     Build.VERSION.SDK_INT >= 29 && ctx.imageLoader.memoryCache?.get(MemoryCache.Key("thumb:$uri:$size")) != null
+
+/** Video/GIF/RAW badge ka shape aur scrim: har cell ke har recompose par naya `RoundedCornerShape` na bane. */
+private val BadgeShape = RoundedCornerShape(6.dp)
+private val BadgeScrim = Color.Black.copy(alpha = 0.55f)
+
+/** Thumb ka default `deferLoad`: kabhi defer nahi. Ek hi instance, taaki default lambda par recompose-skip na tute. */
+private val NEVER_DEFER: () -> Boolean = { false }
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -209,30 +224,31 @@ fun Thumb(
      * true = fast scroll chal raha hai: jis cell ka thumbnail memory-cache me nahi, wo grey placeholder rehta hai
      * (decode shuru nahi hota). Scroll dheema/ruka hote hi load hota hai (halka fade-in). Jo cell ek baar load ho chuka
      * wo kabhi wapas grey nahi hota.
+     *
+     * Lambda isliye (Boolean nahi): grid ka "fast scroll" State composition me padha jaye to uske har badlav
+     * (fling shuru/band) par saare visible cells recompose hote. Ab ise composition me nahi, sirf zarurat par
+     * (grey cell ke liye LaunchedEffect me `snapshotFlow`) padhte hain, baaki cells ko kuch nahi hota.
      */
-    deferLoad: Boolean = false,
+    deferLoad: () -> Boolean = NEVER_DEFER,
 ) {
     val ctx = LocalContext.current
-    val startedLoaded = remember(item.uri, sizePx) { !deferLoad || isThumbCached(ctx, item.uri, sizePx) }
+    val startedLoaded = remember(item.uri, sizePx) {
+        // withoutReadObservation: yahan State padhne se ye cell uske peeche recompose na ho.
+        !Snapshot.withoutReadObservation { deferLoad() } || isThumbCached(ctx, item.uri, sizePx)
+    }
     var loadNow by remember(item.uri, sizePx) { mutableStateOf(startedLoaded) }
-    LaunchedEffect(deferLoad) { if (!deferLoad) loadNow = true }
-    val dateLabel = remember(item.dateTaken, item.dateAdded) {
-        val millis = if (item.dateTaken > 0L) item.dateTaken else item.dateAdded * 1000L
-        java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(millis))
+    val currentDeferLoad by rememberUpdatedState(deferLoad)
+    if (!loadNow) {
+        // Sirf grey (abhi load na hua) cell: fast scroll khatam hone ka intezaar, phir load. Ek baar load => wapas grey nahi.
+        LaunchedEffect(item.uri, sizePx) {
+            snapshotFlow { currentDeferLoad() }.first { !it }
+            loadNow = true
+        }
     }
-    val description = if (item.isVideo) {
-        stringResource(R.string.thumb_video_desc, formatDuration(item.durationMs), dateLabel)
-    } else {
-        stringResource(R.string.thumb_photo_desc, dateLabel)
-    }
-    val selectedLabel = stringResource(R.string.thumb_selected)
-    val favoriteLabel = stringResource(R.string.thumb_favorite)
-    val stateLabel = when {
-        selected && favorite -> "$selectedLabel, $favoriteLabel"
-        selected -> selectedLabel
-        favorite -> favoriteLabel
-        else -> null
-    }
+    // TalkBack ke labels (date, "Selected", "Favorite", "Select") cell banate waqt nahi, balki semantics ko jab
+    // zarurat ho (TalkBack on) tabhi bante hain: pehle har cell par 4 stringResource + naya DateFormat banta tha.
+    val configuration = LocalConfiguration.current
+    val res = remember(ctx, configuration) { ctx.resources }
     // Badges: GIF/RAW label thumbnail ke wahi corner me aate hain jahan video ki duration (dono kabhi saath nahi).
     val typeBadge = remember(item.mime, item.name) {
         when {
@@ -242,7 +258,6 @@ fun Thumb(
             else -> null
         }
     }
-    val selectLabel = stringResource(R.string.thumb_select_action)
     val longClickAction = onLongClick
     Box(
         modifier
@@ -254,14 +269,30 @@ fun Thumb(
             )
             // Ek hi TalkBack node: "Photo, 12 Mar 2025" + selected state.
             .semantics(mergeDescendants = true) {
-                if (stateLabel != null) stateDescription = stateLabel
-                if (longPressHandledByGrid) onLongClick(label = selectLabel) { longClickAction(); true }
+                val dateLabel = ThumbDateFormatter.format(thumbDateMillis(item.dateTaken, item.dateAdded))
+                contentDescription = if (item.isVideo) {
+                    res.getString(R.string.thumb_video_desc, formatDuration(item.durationMs), dateLabel)
+                } else {
+                    res.getString(R.string.thumb_photo_desc, dateLabel)
+                }
+                if (selected || favorite) {
+                    val selectedLabel = res.getString(R.string.thumb_selected)
+                    val favoriteLabel = res.getString(R.string.thumb_favorite)
+                    stateDescription = when {
+                        selected && favorite -> "$selectedLabel, $favoriteLabel"
+                        selected -> selectedLabel
+                        else -> favoriteLabel
+                    }
+                }
+                if (longPressHandledByGrid) {
+                    onLongClick(label = res.getString(R.string.thumb_select_action)) { longClickAction(); true }
+                }
             }
     ) {
         if (loadNow) {
             AsyncImage(
                 model = rememberThumbRequest(item.uri, sizePx, fadeIn = !startedLoaded),
-                contentDescription = description,
+                contentDescription = null, // label parent ke merged semantics me hai (lazy)
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -271,13 +302,13 @@ fun Thumb(
                 Modifier
                     .align(Alignment.BottomEnd)
                     .padding(4.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+                    .background(BadgeScrim, BadgeShape)
                     .padding(horizontal = 4.dp, vertical = 1.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(14.dp))
                 Text(
-                    formatDuration(item.durationMs),
+                    remember(item.durationMs) { formatDuration(item.durationMs) },
                     color = Color.White,
                     style = MaterialTheme.typography.labelSmall,
                 )
@@ -291,7 +322,7 @@ fun Thumb(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(4.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+                    .background(BadgeScrim, BadgeShape)
                     .padding(horizontal = 5.dp, vertical = 1.dp),
             )
         }
@@ -301,7 +332,7 @@ fun Thumb(
                     .align(Alignment.BottomStart)
                     .padding(4.dp)
                     .size(20.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                    .background(BadgeScrim, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(Icons.Filled.Favorite, null, tint = Color(0xFFFF6B81), modifier = Modifier.size(12.dp))
@@ -324,11 +355,19 @@ fun Thumb(
 }
 
 fun formatDuration(ms: Long): String {
+    // String.format nahi: har call par Formatter + parse allocate hota tha (video cell bind par hazaron baar).
     val s = ms / 1000
     val h = s / 3600
     val m = (s % 3600) / 60
     val sec = s % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+    val sb = StringBuilder(8)
+    if (h > 0) {
+        sb.append(h).append(':')
+        if (m < 10) sb.append('0')
+    }
+    sb.append(m).append(':')
+    if (sec < 10) sb.append('0')
+    return sb.append(sec).toString()
 }
 
 fun shareItem(ctx: Context, item: MediaItem) {
