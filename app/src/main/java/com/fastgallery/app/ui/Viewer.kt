@@ -4,6 +4,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
@@ -118,6 +121,8 @@ fun Viewer(
     /** Grid me tap hui thumbnail ki window-bounds + uska index: open/close transition isi se chalta hai. */
     origin: Rect? = null,
     originIndex: Int = -1,
+    /** true = bahar ki URI (Open with): sirf dekhna/zoom/details/share; edit-trash-rename-slideshow nahi. */
+    readOnly: Boolean = false,
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -230,7 +235,7 @@ fun Viewer(
             )
         }
         }
-        AnimatedVisibility(chrome, modifier = Modifier.align(Alignment.TopStart).graphicsLayer(block = chromeAlpha)) {
+        AnimatedVisibility(chrome && !PipController.inPip, modifier = Modifier.align(Alignment.TopStart).graphicsLayer(block = chromeAlpha)) {
             Row(
                 Modifier.fillMaxWidth()
                     .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent)))
@@ -247,6 +252,7 @@ fun Viewer(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                if (!readOnly) {
                 IconButton(onClick = { slideshow = !slideshow }) {
                     Icon(
                         if (slideshow) PauseIcon else Icons.Filled.PlayArrow,
@@ -254,12 +260,13 @@ fun Viewer(
                         tint = Color.White,
                     )
                 }
+                }
                 IconButton(onClick = { current?.let { shareItem(ctx, it) } }) {
                     Icon(Icons.Filled.Share, stringResource(R.string.action_share), tint = Color.White)
                 }
             }
         }
-        AnimatedVisibility(chrome, modifier = Modifier.align(Alignment.BottomCenter).graphicsLayer(block = chromeAlpha)) {
+        if (!readOnly) AnimatedVisibility(chrome && !PipController.inPip, modifier = Modifier.align(Alignment.BottomCenter).graphicsLayer(block = chromeAlpha)) {
             Row(
                 // Videos me player ke controls (seek bar etc.) is bar ke upar aate hain.
                 Modifier.fillMaxWidth()
@@ -445,12 +452,34 @@ private fun ViewerPage(
             animate(dismissOffset, 0f, animationSpec = spring(stiffness = Spring.StiffnessMedium)) { v, _ -> dismissOffset = v }
         }
     }
+    // Pinch ka focal point (ungliyon ka beech): transformable callback me centroid nahi aata,
+    // isliye neeche ka observer (Initial pass, kuch consume nahi karta) ise yahan rakhta hai.
+    val pinchFocal = remember(item.key) { floatArrayOf(Float.NaN, Float.NaN) }
     val transformState = rememberTransformableState { zoom, pan, _ ->
         zoomJob?.cancel()
-        scale = (scale * zoom).coerceIn(1f, 6f)
-        offset = clampOffset(offset + pan, scale)
+        val newScale = (scale * zoom).coerceIn(1f, 6f)
+        val z = newScale / scale
+        // Ungliyon ke neeche ka content apni jagah rahe: o' = (focal - c)(1 - z) + z*o + pan.
+        val center = Offset(box.width / 2f, box.height / 2f)
+        val focal = if (pinchFocal[0].isNaN()) center else Offset(pinchFocal[0], pinchFocal[1])
+        val next = if (z != 1f) (focal - center) * (1f - z) + offset * z + pan else offset + pan
+        scale = newScale
+        offset = clampOffset(next, newScale)
     }
     var modifier = Modifier.fillMaxSize()
+        .pointerInput(item.key) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                do {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val active = event.changes.filter { it.pressed }
+                    if (active.size >= 2) {
+                        pinchFocal[0] = active.map { it.position.x }.average().toFloat()
+                        pinchFocal[1] = active.map { it.position.y }.average().toFloat()
+                    }
+                } while (event.changes.any { it.pressed })
+            }
+        }
         .pointerInput(item.key, scale) {
             if (scale <= 1.01f) {
                 // Neeche kheencho = band; upar kheencho = details sheet. Dono me chhoda to wapas spring.

@@ -11,6 +11,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
+import android.content.res.Configuration
+import android.os.SystemClock
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.fastgallery.app.ui.PipController
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.core.animateFloatAsState
@@ -28,12 +32,14 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -49,6 +55,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +64,11 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Button
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -122,12 +134,29 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // MediaStore query composition se pehle hi shuru: Compose setup ke saath parallel chalti hai.
         val vm = ViewModelProvider(this)[GalleryViewModel::class.java]
-        if (hasMediaAccess(this)) vm.refreshIfNeeded()
+        val access = hasMediaAccess(this)
+        if (access) vm.refreshIfNeeded()
+        // Splash tab tak jab tak pehla page aa na jaye (skeleton ki jagah seedha photos), par 700ms se zyada nahi.
+        val splashStart = SystemClock.uptimeMillis()
+        splash.setKeepOnScreenCondition {
+            access && vm.state.value.loading && SystemClock.uptimeMillis() - splashStart < 700L
+        }
         setContent { GalleryRoot(vm) }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        PipController.onUserLeaveHint(this)
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        PipController.setInPip(isInPictureInPictureMode)
     }
 }
 
@@ -180,12 +209,31 @@ private fun GalleryContent(
     onTheme: (String) -> Unit,
 ) {
     val ctx = LocalContext.current
+    // Doosre app ne picker ki tarah kholi ho (GET_CONTENT / PICK) to non-null.
+    val pick = remember { PickRequest.from(ctx.findActivity()?.intent) }
+    val finishPick: (List<MediaItem>) -> Unit = { picked ->
+        val act = ctx.findActivity()
+        if (act != null && picked.isNotEmpty()) {
+            val clip = android.content.ClipData.newRawUri(null, picked.first().uri)
+            picked.drop(1).forEach { clip.addItem(android.content.ClipData.Item(it.uri)) }
+            act.setResult(
+                Activity.RESULT_OK,
+                android.content.Intent().apply {
+                    data = picked.first().uri
+                    clipData = clip
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+            )
+            act.finish()
+        }
+    }
     val state by vm.state.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val displayResult by vm.displayItems.collectAsStateWithLifecycle(
         initialValue = GalleryDisplayResult(),
     )
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     var granted by remember { mutableStateOf(hasMediaAccess(ctx)) }
     var partialAccess by remember { mutableStateOf(isPartialMediaAccess(ctx)) }
     var partialBannerDismissed by rememberSaveable { mutableStateOf(false) }
@@ -227,8 +275,11 @@ private fun GalleryContent(
     var showAlbumSort by remember { mutableStateOf(false) }
     var albumSort by remember { mutableStateOf(GalleryPreferences.albumSort(ctx)) }
     var pinnedAlbums by remember { mutableStateOf(GalleryPreferences.pinnedAlbums(ctx)) }
-    var sort by rememberSaveable { mutableStateOf(GallerySort.DATE_NEWEST) }
-    var filter by rememberSaveable { mutableStateOf(MediaFilter.ALL) }
+    var sort by rememberSaveable { mutableStateOf(GalleryPreferences.sort(ctx)) }
+    var filter by rememberSaveable { mutableStateOf(pick?.filter ?: GalleryPreferences.filter(ctx)) }
+    // Sort/filter prefs me save. Picker mode me filter save nahi hota (wo doosre app ki request se aata hai).
+    LaunchedEffect(sort) { GalleryPreferences.setSort(ctx, sort) }
+    LaunchedEffect(filter) { if (pick == null) GalleryPreferences.setFilter(ctx, filter) }
     var columns by rememberSaveable { mutableIntStateOf(GalleryPreferences.columns(ctx)) }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val tick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) }
@@ -264,6 +315,19 @@ private fun GalleryContent(
     LaunchedEffect(activeQuery, state.itemsVersion, state.loadingMore, state.hasMore) {
         vm.setQuery(activeQuery)
         if (needsCompleteLibrary) vm.loadAll()
+    }
+
+    // Viewer me aakhri item trash/delete hone par list khali ho jaati hai: viewer band karo, warna
+    // viewerIndex >= 0 rehta hai aur bottom nav bar wapas nahi aata. Load ke dauran (temporary khali list) band nahi karte.
+    LaunchedEffect(
+        viewerIndex, currentList.isEmpty(), displayContextStale,
+        state.loading, state.hasMore, needsCompleteLibrary,
+    ) {
+        if (viewerIndex >= 0 && currentList.isEmpty() && !displayContextStale &&
+            !state.loading && !(needsCompleteLibrary && state.hasMore)
+        ) {
+            viewerIndex = -1
+        }
     }
 
     val approvalLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
@@ -319,6 +383,66 @@ private fun GalleryContent(
      * aur MediaStore 30 din baad khud delete kar deta hai.
      * API < 30: system trash nahi hai, isliye app-level flag + 30 din baad auto-delete (fallback).
      */
+    // Undo: trash ke baad snackbar. API 30+ pe items system trash me gaye the, wapas laane ke liye system approval
+    // dobara aata hai (MANAGE_MEDIA nahi hai); API < 30 pe sirf app-level flag hatta hai, turant.
+    fun undoTrash(items: List<MediaItem>) {
+        if (items.isEmpty()) return
+        val message = ctx.getString(R.string.msg_restored)
+        if (Build.VERSION.SDK_INT < 30) {
+            GalleryPreferences.setTrashedKeys(ctx, items.map { it.key }, false)
+            vm.refreshPreferences()
+            Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+            return
+        }
+        runCatching {
+            val request = MediaStore.createTrashRequest(ctx.contentResolver, items.map { it.uri }, false)
+            requestApproval(request.intentSender) {
+                vm.load()
+                Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+            }
+        }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_trash_request_failed), Toast.LENGTH_LONG).show() }
+    }
+    fun showUndoSnackbar(message: String, onUndo: () -> Unit) {
+        val undoLabel = ctx.getString(R.string.action_undo)
+        // Lagataar actions par snackbar queue na bane: purana hatao, naya dikhao.
+        snackbarHostState.currentSnackbarData?.dismiss()
+        scope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = message,
+                actionLabel = undoLabel,
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) onUndo()
+        }
+    }
+    fun showTrashedSnackbar(items: List<MediaItem>) =
+        showUndoSnackbar(ctx.getString(R.string.msg_trashed)) { undoTrash(items) }
+    // Restore ka Undo: items ko wapas trash me bhejo. Split item.isTrashed se hota hai (restore se pehle ki
+    // halat): API 30+ pe system-trashed items system trash me, baaki (legacy/API < 30) app-level flag me.
+    fun undoRestore(items: List<MediaItem>) {
+        if (items.isEmpty()) return
+        val message = ctx.getString(R.string.msg_trashed)
+        val systemItems = if (Build.VERSION.SDK_INT >= 30) items.filter { it.isTrashed } else emptyList()
+        val systemSet = systemItems.toSet()
+        val flagItems = items.filter { it !in systemSet }
+        if (flagItems.isNotEmpty()) {
+            GalleryPreferences.setTrashedKeys(ctx, flagItems.map { it.key }, true)
+            vm.refreshPreferences()
+        }
+        if (systemItems.isEmpty()) {
+            Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+            return
+        }
+        runCatching {
+            val request = MediaStore.createTrashRequest(ctx.contentResolver, systemItems.map { it.uri }, true)
+            requestApproval(request.intentSender) {
+                vm.load()
+                Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+            }
+        }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_trash_request_failed), Toast.LENGTH_LONG).show() }
+    }
+    fun showRestoredSnackbar(items: List<MediaItem>) =
+        showUndoSnackbar(ctx.getString(R.string.msg_restored)) { undoRestore(items) }
     fun trashMedia(items: List<MediaItem>, value: Boolean) {
         if (items.isEmpty()) return
         val systemItems = when {
@@ -332,9 +456,8 @@ private fun GalleryContent(
             GalleryPreferences.setTrashedKeys(ctx, flagItems.map { it.key }, value)
             vm.refreshPreferences()
         }
-        val message = ctx.getString(if (value) R.string.msg_trashed else R.string.msg_restored)
         if (systemItems.isEmpty()) {
-            Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+            if (value) showTrashedSnackbar(items) else showRestoredSnackbar(items)
             return
         }
         if (Build.VERSION.SDK_INT < 30) return
@@ -342,7 +465,7 @@ private fun GalleryContent(
             val request = MediaStore.createTrashRequest(ctx.contentResolver, systemItems.map { it.uri }, value)
             requestApproval(request.intentSender) {
                 vm.load()
-                Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+                if (value) showTrashedSnackbar(items) else showRestoredSnackbar(items)
             }
         }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_trash_request_failed), Toast.LENGTH_LONG).show() }
     }
@@ -403,6 +526,7 @@ private fun GalleryContent(
         )
         inAlbum -> state.albums.firstOrNull { it.id == albumId }?.name ?: stringResource(R.string.title_album_fallback)
         selected.isNotEmpty() -> stringResource(R.string.selected_count, selected.size)
+        pick != null && tab == 0 -> stringResource(R.string.pick_title)
         tab == 0 -> stringResource(R.string.nav_photos)
         tab == 1 -> stringResource(R.string.nav_albums)
         tab == 2 -> stringResource(R.string.nav_favorites)
@@ -466,6 +590,8 @@ private fun GalleryContent(
                     ),
             ) {
         Scaffold(
+            // Viewer khula ho to snackbar neeche root-level host se dikhta hai (Scaffold viewer ke peeche hai).
+            snackbarHost = { if (viewerIndex < 0) SnackbarHost(snackbarHostState) },
             topBar = {
                 TopAppBar(
                     title = {
@@ -539,7 +665,21 @@ private fun GalleryContent(
                 )
             },
             bottomBar = {
-                if (viewerIndex < 0 && selected.isNotEmpty()) {
+                if (viewerIndex < 0 && selected.isNotEmpty() && pick != null) {
+                    // Picker mode: trash/delete actions nahi, sirf "Done".
+                    Surface(
+                        modifier = Modifier.navigationBarsPadding().fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        shape = RoundedCornerShape(26.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 4.dp,
+                        shadowElevation = 8.dp,
+                    ) {
+                        Button(
+                            onClick = { finishPick(currentList.filter { it.key in selected }) },
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        ) { Text(stringResource(R.string.pick_done, selected.size)) }
+                    }
+                } else if (viewerIndex < 0 && selected.isNotEmpty()) {
                     val picked = currentList.filter { it.key in selected }
                     SelectionActionBar(
                         inTrash = tab == 3,
@@ -645,10 +785,23 @@ private fun GalleryContent(
                     }
                 }
             },
-        ) { padding ->
+        ) { scaffoldPadding ->
+            // Filter laga ho to grid ke upar "Filter: Videos ✕" chip ki patti dikhti hai; grid/empty state uske neeche shuru hote hain.
+            val chipHeight = 48.dp
+            val showFilterChip = pick == null && granted && filter != MediaFilter.ALL &&
+                tab != 4 && !(tab == 1 && !inAlbum)
+            val layoutDir = androidx.compose.ui.platform.LocalLayoutDirection.current
+            val padding = if (showFilterChip) {
+                PaddingValues(
+                    start = scaffoldPadding.calculateStartPadding(layoutDir),
+                    top = scaffoldPadding.calculateTopPadding() + chipHeight,
+                    end = scaffoldPadding.calculateEndPadding(layoutDir),
+                    bottom = scaffoldPadding.calculateBottomPadding(),
+                )
+            } else scaffoldPadding
             Box(Modifier.fillMaxSize()) {
                 when {
-                    !granted -> PermissionScreen(padding) { permissionLauncher.launch(mediaPermissions()) }
+                    !granted -> PermissionScreen(scaffoldPadding) { permissionLauncher.launch(mediaPermissions()) }
                     state.loading -> SkeletonGrid(columns, padding)
                     needsCompleteLibrary && state.hasMore && tab != 4 -> SkeletonGrid(columns, padding)
                     tab == 4 && settingsPage == 1 -> ManagedAlbumsScreen(
@@ -750,15 +903,27 @@ private fun GalleryContent(
                         sort = sort,
                         onScrubStart = vm::loadAll,
                         onOpen = { index, rect ->
-                            viewerOrigin = rect
-                            viewerOriginIndex = index
-                            viewerIndex = index
+                            if (pick != null) {
+                                // Picker: single me turant wapas, multiple me pehla item select (phir tap se toggle).
+                                val item = currentList.getOrNull(index)
+                                if (item != null) {
+                                    if (pick.multiple) selected = setOf(item.key) else finishPick(listOf(item))
+                                }
+                            } else {
+                                viewerOrigin = rect
+                                viewerOriginIndex = index
+                                viewerIndex = index
+                            }
                         },
                         onToggleSelection = { item ->
-                            tick()
-                            selected = if (item.key in selected) selected - item.key else selected + item.key
+                            if (pick != null && !pick.multiple) {
+                                finishPick(listOf(item))
+                            } else {
+                                tick()
+                                selected = if (item.key in selected) selected - item.key else selected + item.key
+                            }
                         },
-                        onSetSelection = { selected = it },
+                        onSetSelection = { if (pick == null || pick.multiple) selected = it },
                         onPinchColumns = { next ->
                             columns = next.coerceIn(2, 8)
                             GalleryPreferences.setColumns(ctx, columns)
@@ -766,6 +931,43 @@ private fun GalleryContent(
                         onLoadMore = vm::loadNextPage,
                     ) }
                 }
+            if (showFilterChip) {
+                val filterLabel = stringResource(
+                    when (filter) {
+                        MediaFilter.PHOTOS -> R.string.filter_photos
+                        MediaFilter.VIDEOS -> R.string.filter_videos
+                        MediaFilter.GIFS -> R.string.filter_gifs
+                        MediaFilter.RAW -> R.string.filter_raw
+                        MediaFilter.ALL -> R.string.filter_all
+                    },
+                )
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(top = scaffoldPadding.calculateTopPadding())
+                        .fillMaxWidth()
+                        .height(chipHeight),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        InputChip(
+                            selected = true,
+                            onClick = { filter = MediaFilter.ALL },
+                            label = { Text(stringResource(R.string.filter_active_chip, filterLabel)) },
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = stringResource(R.string.action_clear_filter),
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
             if (granted && partialAccess && !partialBannerDismissed) {
                 PartialAccessBanner(
                     onManage = { permissionLauncher.launch(mediaPermissions()) },
@@ -822,6 +1024,16 @@ private fun GalleryContent(
                         }
                     }
                 },
+            )
+        }
+        if (viewerIndex >= 0) {
+            // Viewer ke bottom bar ke upar.
+            SnackbarHost(
+                snackbarHostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 72.dp),
             )
         }
     }

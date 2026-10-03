@@ -54,13 +54,15 @@ import kotlin.math.hypot
 import kotlin.math.roundToInt
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
@@ -100,6 +102,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -230,6 +234,47 @@ fun MediaGrid(
     var pinchScale by remember { mutableFloatStateOf(1f) }
     var pinchOrigin by remember { mutableStateOf(Offset.Zero) }
     var settleJob by remember { mutableStateOf<Job?>(null) }
+    // Trash/favorite/filter se items badalne par cells smoothly khisakte hain (animateItem).
+    // Pinch ke dauran band: columns badalne par scale pehle se compensate hota hai, dobara animate karne se jhatka aata.
+    val animateItems by remember { derivedStateOf { pinchScale == 1f } }
+    // Sticky date header: LazyVerticalGrid me stickyHeader nahi hai, isliye content area ke top pe full-width overlay.
+    // Abhi ka (pinned) header hamesha top pe rehta hai; agla header upar aate hi use dheere se upar dhakel deta hai.
+    val headerIndices = remember(entries) {
+        entries.indices.filter { entries[it] is GridEntry.Header }.toIntArray()
+    }
+    // Pinned header = aakhri header jiska index pehle visible item se pehle (ya barabar) hai.
+    val stickyHeaderIndex by remember(headerIndices) {
+        derivedStateOf {
+            if (headerIndices.isEmpty()) -1
+            else {
+                val pos = java.util.Arrays.binarySearch(headerIndices, gridState.firstVisibleItemIndex)
+                val at = if (pos >= 0) pos else -pos - 2
+                if (at >= 0) headerIndices[at] else -1
+            }
+        }
+    }
+    val stickyLabel = (entries.getOrNull(stickyHeaderIndex) as? GridEntry.Header)?.label
+    var stickyHeightPx by remember { mutableIntStateOf(0) }
+    // Agla header pinned header ke itna paas aaye to pinned header utna upar khisakta hai (<= 0).
+    // Offsets ka origin (content padding) maane bina, pehle visible item se relative doori nikalte hain.
+    val stickyPush by remember(headerIndices) {
+        derivedStateOf {
+            val pinned = stickyHeaderIndex
+            val height = stickyHeightPx
+            if (pinned < 0 || height <= 0) 0
+            else {
+                val next = headerIndices.getOrNull(java.util.Arrays.binarySearch(headerIndices, pinned) + 1)
+                val info = gridState.layoutInfo.visibleItemsInfo
+                val nextInfo = if (next == null) null else info.firstOrNull { it.index == next }
+                val firstInfo = info.firstOrNull { it.index == gridState.firstVisibleItemIndex }
+                if (nextInfo == null || firstInfo == null) 0
+                else {
+                    val contentTop = firstInfo.offset.y + gridState.firstVisibleItemScrollOffset
+                    (nextInfo.offset.y - contentTop - height).coerceIn(-height, 0)
+                }
+            }
+        }
+    }
     // Filter/sort/search badalne par naye result top se dikhao.
     LaunchedEffect(resetKey) { gridState.scrollToItem(0) }
     LaunchedEffect(gridState, items.size) {
@@ -413,14 +458,12 @@ fun MediaGrid(
                 span = { if (it is GridEntry.Header) GridItemSpan(maxLineSpan) else GridItemSpan(1) },
                 contentType = { it is GridEntry.Header },
             ) { entry ->
+                val itemModifier = if (animateItems) Modifier.animateItem() else Modifier
                 when (entry) {
-                    is GridEntry.Header -> Text(
-                        entry.label,
-                        style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    )
+                    is GridEntry.Header -> DateHeaderText(entry.label, itemModifier)
                     is GridEntry.Media -> Thumb(
                         entry.item,
+                        modifier = itemModifier,
                         sizePx = thumbPx,
                         selected = entry.item.key in selected,
                         onClick = {
@@ -444,6 +487,27 @@ fun MediaGrid(
                 }
             }
         }
+        if (stickyLabel != null) {
+            // Content area ke top pe clip: pushed-up header top bar / filter chip ke peeche nahi, apni hi patti me gayab hota hai.
+            val stickyHeight = with(LocalDensity.current) { stickyHeightPx.toDp() }
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .padding(top = padding.calculateTopPadding())
+                    .fillMaxWidth()
+                    .then(if (stickyHeightPx > 0) Modifier.height(stickyHeight) else Modifier)
+                    .clipToBounds(),
+            ) {
+                DateHeaderText(
+                    stickyLabel,
+                    Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { if (it.height != stickyHeightPx) stickyHeightPx = it.height }
+                        .graphicsLayer { translationY = stickyPush.toFloat() }
+                        .background(MaterialTheme.colorScheme.background),
+                )
+            }
+        }
         if (items.size > 50) {
             FastScroller(
                 gridState = gridState,
@@ -456,6 +520,16 @@ fun MediaGrid(
     }
 }
 
+
+/** Grid ka date header; sticky overlay bhi yehi use karta hai taaki dono ki height/style bilkul barabar rahe. */
+@Composable
+private fun DateHeaderText(label: String, modifier: Modifier = Modifier) {
+    Text(
+        label,
+        style = MaterialTheme.typography.titleSmall,
+        modifier = modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+    )
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -657,7 +731,7 @@ fun SettingsScreen(
             }
         }
         item {
-            Divider()
+            HorizontalDivider()
             Text(stringResource(R.string.settings_grid_columns, columns.coerceAtLeast(2)), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
             Slider(
                 value = columns.coerceIn(2, 8).toFloat(),
@@ -668,7 +742,7 @@ fun SettingsScreen(
             Text(stringResource(R.string.settings_pinch_hint), style = MaterialTheme.typography.bodySmall)
         }
         item {
-            Divider()
+            HorizontalDivider()
             Text(stringResource(R.string.settings_private_albums), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
             Text(
                 stringResource(R.string.settings_private_hint),
@@ -770,7 +844,7 @@ fun ManagedAlbumsScreen(
                     TextButton(onClick = { onRemove(longId) }) { Text(removeLabel) }
                 }
             }
-            Divider()
+            HorizontalDivider()
         }
     }
     if (picker) {

@@ -1,5 +1,6 @@
 package com.fastgallery.app
 
+import android.util.Log
 import android.app.Application
 import android.database.ContentObserver
 import android.os.Build
@@ -209,7 +210,8 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                 _refreshing.value = false
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                Log.e("GalleryViewModel", "Load failed", error)
                 if (generation == loadGeneration) {
                     _state.value = _state.value.copy(loading = false, loadingMore = false)
                     _refreshing.value = false
@@ -236,7 +238,8 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                 appendPage(offset, page.items, page.hasMore)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                Log.e("GalleryViewModel", "Load next page failed", error)
                 if (generation == loadGeneration) {
                     _state.value = _state.value.copy(loadingMore = false)
                 }
@@ -270,7 +273,8 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                Log.e("GalleryViewModel", "Load all failed", error)
                 if (generation == loadGeneration) {
                     _state.value = _state.value.copy(loadingMore = false)
                 }
@@ -313,7 +317,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         for (key in expired) {
             val ok = runCatching {
                 MediaOperations.permanentlyDeleteUri(app, android.net.Uri.parse(key)) >= 0
-            }.getOrDefault(false)
+            }.onFailure { Log.w("GalleryViewModel", "Expired trash purge failed: $key", it) }.getOrDefault(false)
             if (ok) done += key
         }
         GalleryPreferences.setTrashedKeys(app, done, false)
@@ -348,54 +352,55 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         refreshJob?.cancel()
     }
 
-    private fun deriveDisplayItems(gallery: GalleryState, query: GalleryQuery): List<MediaItem> {
-        if (query.tab == 4 || (query.tab == 1 && query.albumId == null)) return emptyList()
-        val hidden = gallery.hiddenAlbumIds.mapNotNullTo(HashSet()) { it.toLongOrNull() }
-        val locked = gallery.lockedAlbumIds.mapNotNullTo(HashSet()) { it.toLongOrNull() }
-        // Hidden + locked albums Photos / Favorites / Trash / search me kabhi nahi dikhte.
-        // Locked album sirf authenticate hone ke baad apne album screen me khulta hai.
-        val restricted = HashSet<Long>(hidden).apply { addAll(locked) }
-        val baseItems = when {
-            query.tab == 3 -> (gallery.trashItems + gallery.items.filter { it.key in gallery.trashKeys })
-                .filter { it.bucketId !in restricted }
-                .sortedByDescending { it.dateAdded }
-            query.tab == 2 -> gallery.items.filter {
-                it.key in gallery.favoriteKeys &&
-                    it.key !in gallery.trashKeys &&
-                    it.bucketId !in restricted
-            }
-            query.albumId != null -> {
-                val id: Long = query.albumId
-                if (id in locked && gallery.unlockedAlbumId != id) emptyList()
-                else gallery.items.filter { it.bucketId == id && it.key !in gallery.trashKeys }
-            }
-            // Common case (koi hidden/locked/trash nahi): list copy hi skip.
-            restricted.isEmpty() && gallery.trashKeys.isEmpty() -> gallery.items
-            else -> gallery.items.filter {
-                it.bucketId !in restricted && it.key !in gallery.trashKeys
-            }
-        }
-        val filtered = baseItems.asSequence()
-            .filter { it.matchesFilter(query.filter) }
-            .filter {
-                query.search.isBlank() ||
-                    it.name.contains(query.search, ignoreCase = true) ||
-                    it.bucketName.contains(query.search, ignoreCase = true)
-            }
-            .toList()
-        return when (query.sort) {
-            // MediaStore already emits each page in this exact date order.
-            GallerySort.DATE_NEWEST -> filtered
-            GallerySort.DATE_OLDEST -> filtered.sortedBy { it.dateAdded }
-            GallerySort.NAME -> filtered.sortedBy { it.name.lowercase() }
-            GallerySort.SIZE_LARGEST -> filtered.sortedByDescending { it.sizeBytes }
-        }
-    }
-
     private fun requiresCompleteLibrary(query: GalleryQuery): Boolean =
         query.tab != 0 ||
             query.albumId != null ||
             query.search.isNotBlank() ||
             query.sort != GallerySort.DATE_NEWEST ||
             query.filter != MediaFilter.ALL
+}
+
+/** Tab/album/search/filter/sort ke hisaab se grid ke items. Pure function hai (unit tests isi ko check karte hain). */
+internal fun deriveDisplayItems(gallery: GalleryState, query: GalleryQuery): List<MediaItem> {
+    if (query.tab == 4 || (query.tab == 1 && query.albumId == null)) return emptyList()
+    val hidden = gallery.hiddenAlbumIds.mapNotNullTo(HashSet()) { it.toLongOrNull() }
+    val locked = gallery.lockedAlbumIds.mapNotNullTo(HashSet()) { it.toLongOrNull() }
+    // Hidden + locked albums Photos / Favorites / Trash / search me kabhi nahi dikhte.
+    // Locked album sirf authenticate hone ke baad apne album screen me khulta hai.
+    val restricted = HashSet<Long>(hidden).apply { addAll(locked) }
+    val baseItems = when {
+        query.tab == 3 -> (gallery.trashItems + gallery.items.filter { it.key in gallery.trashKeys })
+            .filter { it.bucketId !in restricted }
+            .sortedByDescending { it.dateAdded }
+        query.tab == 2 -> gallery.items.filter {
+            it.key in gallery.favoriteKeys &&
+                it.key !in gallery.trashKeys &&
+                it.bucketId !in restricted
+        }
+        query.albumId != null -> {
+            val id: Long = query.albumId
+            if (id in locked && gallery.unlockedAlbumId != id) emptyList()
+            else gallery.items.filter { it.bucketId == id && it.key !in gallery.trashKeys }
+        }
+        // Common case (koi hidden/locked/trash nahi): list copy hi skip.
+        restricted.isEmpty() && gallery.trashKeys.isEmpty() -> gallery.items
+        else -> gallery.items.filter {
+            it.bucketId !in restricted && it.key !in gallery.trashKeys
+        }
+    }
+    val filtered = baseItems.asSequence()
+        .filter { it.matchesFilter(query.filter) }
+        .filter {
+            query.search.isBlank() ||
+                it.name.contains(query.search, ignoreCase = true) ||
+                it.bucketName.contains(query.search, ignoreCase = true)
+        }
+        .toList()
+    return when (query.sort) {
+        // MediaStore already emits each page in this exact date order.
+        GallerySort.DATE_NEWEST -> filtered
+        GallerySort.DATE_OLDEST -> filtered.sortedBy { it.dateAdded }
+        GallerySort.NAME -> filtered.sortedBy { it.name.lowercase() }
+        GallerySort.SIZE_LARGEST -> filtered.sortedByDescending { it.sizeBytes }
+    }
 }

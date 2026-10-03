@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -25,6 +26,10 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -48,16 +53,20 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.fastgallery.app.R
+import com.fastgallery.app.data.GalleryPreferences
 import com.fastgallery.app.data.MediaItem as GalleryMediaItem
+import com.fastgallery.app.findActivity
 import java.util.Locale
 
 private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
@@ -95,6 +104,38 @@ private val VolumeOffIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
     ).build()
 }
 
+/** Material "Repeat" icon. */
+private val RepeatIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+    ImageVector.Builder(
+        name = "Repeat",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).addPath(
+        pathData = PathParser().parsePathString(
+            "M7,7h10v3l4,-4 -4,-4v3L5,5v6h2L7,7zM17,17L7,17v-3l-4,4 4,4v-3h12v-6h-2v4z",
+        ).toNodes(),
+        fill = SolidColor(Color.Black),
+    ).build()
+}
+
+/** Material "Picture in picture alt" icon. */
+private val PipIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+    ImageVector.Builder(
+        name = "PictureInPicture",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).addPath(
+        pathData = PathParser().parsePathString(
+            "M19,11h-8v6h8v-6zM21,19L21,4.98C21,3.88 20.1,3 19,3L5,3c-1.1,0 -2,0.88 -2,1.98L3,19c0,1.1 0.9,2 2,2h14c1.1,0 2,-0.9 2,-2zM19,19.02L5,19.02L5,4.97h14v14.05z",
+        ).toNodes(),
+        fill = SolidColor(Color.Black),
+    ).build()
+}
+
 private fun formatTime(ms: Long): String {
     val total = ms.coerceAtLeast(0L) / 1000L
     val h = total / 3600L
@@ -120,10 +161,18 @@ fun VideoPlayer(
     onHideControls: () -> Unit,
 ) {
     val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
     val hideControls by rememberUpdatedState(onHideControls)
+    val currentFlag by rememberUpdatedState(isCurrent)
+    // PiP window me controls nahi dikhte (system ke apne play/pause button hote hain).
+    val controlsVisible = controlsVisible && !PipController.inPip
+    // Pichhli baar jahan chhoda tha wahin se shuru (3 sec se zyada dekha ho to).
+    val startMs = remember(item.key) { GalleryPreferences.videoPosition(context, item.key) }
     val player = remember(item.key) {
         ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(item.uri))
+            if (startMs > 0L) setMediaItem(MediaItem.fromUri(item.uri), startMs)
+            else setMediaItem(MediaItem.fromUri(item.uri))
+            repeatMode = if (GalleryPreferences.videoLoop(context)) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
             prepare()
             playWhenReady = false
         }
@@ -131,18 +180,34 @@ fun VideoPlayer(
 
     var isPlaying by remember(player) { mutableStateOf(false) }
     var durationMs by remember(player) { mutableLongStateOf(item.durationMs.coerceAtLeast(0L)) }
-    var positionMs by remember(player) { mutableLongStateOf(0L) }
+    var positionMs by remember(player) { mutableLongStateOf(startMs) }
     var muted by remember(player) { mutableStateOf(false) }
     var speed by remember(player) { mutableFloatStateOf(1f) }
     var seeking by remember(player) { mutableStateOf(false) }
     var seekFraction by remember(player) { mutableFloatStateOf(0f) }
     var interaction by remember(player) { mutableIntStateOf(0) }
     var speedMenu by remember(player) { mutableStateOf(false) }
+    var loop by remember(player) { mutableStateOf(GalleryPreferences.videoLoop(context)) }
+    val pipSupported = remember(activity) { PipController.isSupported(activity) }
+
+    // Position yaad rakho: bahut shuru/bahut aakhir ya poora dekh liya ho to saved position hata do.
+    fun savePosition() {
+        val d = player.duration
+        if (d == C.TIME_UNSET || d <= 0L) return // abhi prepare nahi hua: purani saved position mat chhedo
+        val p = player.currentPosition
+        val keep = player.playbackState != Player.STATE_ENDED && p >= 3_000L && p <= d - 3_000L
+        GalleryPreferences.setVideoPosition(context, item.key, if (keep) p else 0L)
+    }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
+                if (currentFlag) PipController.update(activity, playing, player.videoSize.width, player.videoSize.height)
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (currentFlag && player.isPlaying) PipController.update(activity, true, videoSize.width, videoSize.height)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -154,21 +219,63 @@ fun VideoPlayer(
         player.addListener(listener)
         onDispose {
             player.removeListener(listener)
+            savePosition()
+            if (currentFlag) PipController.disarm(activity)
             player.release()
         }
     }
 
     // Swipe karke dusre page pe jaane ya app background me jaane par video pause.
-    LaunchedEffect(isCurrent) { if (!isCurrent) player.pause() }
+    LaunchedEffect(isCurrent) {
+        if (!isCurrent) {
+            player.pause()
+            savePosition()
+            PipController.disarm(activity)
+        }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, player) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) player.pause()
+            when (event) {
+                // Chalte video me Home dabane par PiP shuru hota hai (activity pause hoti hai, stop nahi): tab pause mat karo.
+                Lifecycle.Event.ON_PAUSE -> {
+                    if (!PipController.armed) player.pause()
+                    savePosition()
+                }
+                // App sach me background me gaya (ya PiP window band hui): pause.
+                Lifecycle.Event.ON_STOP -> {
+                    player.pause()
+                    savePosition()
+                }
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // PiP window ke play/pause button ka broadcast.
+    DisposableEffect(player, isCurrent, pipSupported) {
+        if (!isCurrent || !pipSupported) {
+            onDispose { }
+        } else {
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(c: Context?, intent: Intent?) {
+                    if (intent?.action != PipController.ACTION_TOGGLE) return
+                    if (player.isPlaying) player.pause() else player.play()
+                }
+            }
+            ContextCompat.registerReceiver(
+                context,
+                receiver,
+                IntentFilter(PipController.ACTION_TOGGLE),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+            onDispose { runCatching { context.unregisterReceiver(receiver) } }
+        }
+    }
+
+    LaunchedEffect(player, loop) { player.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF }
     LaunchedEffect(player, muted) { player.volume = if (muted) 0f else 1f }
     LaunchedEffect(player, speed) { player.setPlaybackSpeed(speed) }
 
@@ -292,6 +399,31 @@ fun VideoPlayer(
                             stringResource(if (muted) R.string.video_unmute else R.string.video_mute),
                             tint = Color.White,
                         )
+                    }
+                    IconButton(
+                        onClick = {
+                            loop = !loop
+                            GalleryPreferences.setVideoLoop(context, loop)
+                            interaction++
+                        },
+                        modifier = Modifier.background(
+                            if (loop) Color.White.copy(alpha = 0.25f) else Color.Transparent,
+                            CircleShape,
+                        ),
+                    ) {
+                        Icon(
+                            RepeatIcon,
+                            stringResource(if (loop) R.string.video_loop_on else R.string.video_loop_off),
+                            tint = Color.White,
+                        )
+                    }
+                    if (pipSupported) {
+                        IconButton(onClick = {
+                            interaction++
+                            PipController.enter(activity)
+                        }) {
+                            Icon(PipIcon, stringResource(R.string.video_pip), tint = Color.White)
+                        }
                     }
                     Box {
                         val speedDescription = stringResource(R.string.video_speed)

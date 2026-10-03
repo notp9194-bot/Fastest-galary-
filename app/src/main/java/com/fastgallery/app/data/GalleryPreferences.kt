@@ -53,6 +53,56 @@ object GalleryPreferences {
             .getOrDefault(AlbumSort.RECENT)
     fun setAlbumSort(context: Context, value: AlbumSort) { prefs(context).edit().putString("album_sort", value.name).apply() }
 
+    /** Photos grid ka sort/filter: app band karke kholne par bhi yaad rehta hai. */
+    fun sort(context: Context): GallerySort =
+        runCatching { GallerySort.valueOf(prefs(context).getString("gallery_sort", null) ?: "") }
+            .getOrDefault(GallerySort.DATE_NEWEST)
+    fun setSort(context: Context, value: GallerySort) { prefs(context).edit().putString("gallery_sort", value.name).apply() }
+    fun filter(context: Context): MediaFilter =
+        runCatching { MediaFilter.valueOf(prefs(context).getString("gallery_filter", null) ?: "") }
+            .getOrDefault(MediaFilter.ALL)
+    fun setFilter(context: Context, value: MediaFilter) { prefs(context).edit().putString("gallery_filter", value.name).apply() }
+
+    /** Video loop on/off (sab videos ke liye ek hi setting). */
+    fun videoLoop(context: Context): Boolean = prefs(context).getBoolean("video_loop", false)
+    fun setVideoLoop(context: Context, value: Boolean) { prefs(context).edit().putBoolean("video_loop", value).apply() }
+
+    /** Har video ki aakhri position (ms). Sirf pichhle MAX_VIDEO_POSITIONS videos yaad rehte hain. */
+    private const val VIDEO_POSITIONS = "video_positions"
+    private const val MAX_VIDEO_POSITIONS = 100
+
+    fun videoPosition(context: Context, key: String): Long = readVideoPositions(context)[key]?.first ?: 0L
+
+    /** positionMs <= 0 = is video ki saved position hata do. */
+    fun setVideoPosition(context: Context, key: String, positionMs: Long) {
+        val map = readVideoPositions(context).toMutableMap()
+        if (positionMs <= 0L) {
+            if (map.remove(key) == null) return
+        } else {
+            map[key] = positionMs to System.currentTimeMillis()
+            if (map.size > MAX_VIDEO_POSITIONS) {
+                map.entries.sortedBy { it.value.second }
+                    .take(map.size - MAX_VIDEO_POSITIONS)
+                    .forEach { map.remove(it.key) }
+            }
+        }
+        prefs(context).edit().putStringSet(VIDEO_POSITIONS, map.mapTo(HashSet()) { "${it.key}|${it.value.first}|${it.value.second}" }).apply()
+    }
+
+    // Entry "key|positionMs|savedAtMs".
+    private fun readVideoPositions(context: Context): Map<String, Pair<Long, Long>> {
+        val raw = prefs(context).getStringSet(VIDEO_POSITIONS, emptySet()) ?: emptySet()
+        val map = HashMap<String, Pair<Long, Long>>()
+        for (entry in raw) {
+            val parts = entry.split('|')
+            if (parts.size < 3) continue
+            val savedAt = parts[parts.size - 1].toLongOrNull() ?: continue
+            val pos = parts[parts.size - 2].toLongOrNull() ?: continue
+            map[parts.subList(0, parts.size - 2).joinToString("|")] = pos to savedAt
+        }
+        return map
+    }
+
     fun theme(context: Context): String = prefs(context).getString("theme", "system") ?: "system"
     fun setTheme(context: Context, value: String) { prefs(context).edit().putString("theme", value).apply() }
     fun columns(context: Context): Int = prefs(context).getInt("grid_columns", 3)

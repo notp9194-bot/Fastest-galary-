@@ -31,8 +31,8 @@ android {
         applicationId = "com.fastgallery.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 20
-        versionName = "1.4.14"
+        versionCode = 28
+        versionName = "1.4.22"
     }
 
     signingConfigs {
@@ -68,6 +68,13 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
+    testOptions {
+        unitTests {
+            // Robolectric ko resources chahiye; android.util.Log jaise stubs unit tests me crash na karein.
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {
@@ -77,6 +84,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
 
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
@@ -92,6 +100,10 @@ dependencies {
     // Baseline Profile: install ke waqt ART ko hot code batata hai -> cold start tez.
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     "baselineProfile"(project(":baselineprofile"))
+
+    // Unit tests (JVM): Robolectric se asli Uri / SharedPreferences milte hain.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.13")
 }
 
 baselineProfile {

@@ -1,5 +1,6 @@
 package com.fastgallery.app.ui
 
+import android.util.Log
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import androidx.compose.foundation.Canvas
@@ -77,7 +78,15 @@ private val FULL_IMAGE = Rect(0f, 0f, 1f, 1f)
 fun EditDialog(item: MediaItem, onDismiss: () -> Unit, onSave: (ImageEdit) -> Unit) {
     val context = LocalContext.current
     val preview by produceState<Bitmap?>(null, item.uri) {
-        value = withContext(Dispatchers.IO) { runCatching { MediaOperations.loadEditPreview(context, item.uri) }.getOrNull() }
+        value = withContext(Dispatchers.IO) {
+            runCatching { MediaOperations.loadEditPreview(context, item.uri) }
+                .onFailure {
+                    if (it !is kotlinx.coroutines.CancellationException) {
+                        Log.w("EditDialog", "Edit preview load failed: ${item.uri}", it)
+                    }
+                }
+                .getOrNull()
+        }
     }
     var quarterTurns by remember { mutableIntStateOf(0) }
     var filter by remember { mutableStateOf("Original") }

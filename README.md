@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.14
+# Fast Gallery 1.4.22
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -44,6 +44,51 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 2. Local: `keystore.properties.example` ko `keystore.properties` me copy karke values bharo, phir `gradle assembleRelease` ya `gradle bundleRelease` (Play Store ke liye AAB). `keystore.properties` aur `*.keystore` git me ignore hain.
 3. GitHub Actions: repo Secrets me `ANDROID_KEYSTORE_BASE64` (`base64 -w0 release.keystore`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` daalo. `v*` tag build bina keystore secret ke fail hota hai.
 4. Note: debug key se pehle install ki hui APK ke upar apni keystore wali APK install nahi hogi (signature alag) - uninstall karke install karo.
+
+## Updates in 1.4.22
+
+- Feature: **Proper SplashScreen**. `androidx.core:core-splashscreen` (Android 12+ system splash, purane me compat). Brand purple background + app icon, `MainActivity` theme `Theme.Gallery.Starting` (baad me `Theme.Gallery`). Splash pehla page aane tak rukti hai (max 700 ms), taaki cold start me skeleton ki jagah seedha photos dikhen. `ViewActivity` (Open with) me splash nahi.
+- Version: `versionName` 1.4.22 / `versionCode` 28.
+
+## Updates in 1.4.21
+
+- Fix: Viewer me aakhri photo/video trash ya delete karne par viewer ab band ho jata hai. Pehle list khali hone par viewer gayab ho jata tha par `viewerIndex` >= 0 rehta tha, jis se bottom nav bar wapas nahi aata tha. Load ke dauran temporary khali list pe viewer band nahi hota.
+- Version: `versionName` 1.4.21 / `versionCode` 27.
+
+## Updates in 1.4.20
+
+- Fix: **Viewer pinch zoom** ab ungliyon ke beech wale point se hota hai (pehle center se). Ungliyon ke neeche ka hissa apni jagah rehta hai, zoom-in/out dono me. Double-tap pehle jaisa. Centroid ek alag Initial-pass observer se pakda jata hai (kuch consume nahi karta), isliye pager swipe aur pan pe asar nahi.
+- Version: `versionName` 1.4.20 / `versionCode` 26.
+
+## Updates in 1.4.19
+
+- Feature: **Video loop**. Video controls me Repeat button; on karne par video khatam hote hi dobara chalta hai. Setting yaad rehti hai (sab videos ke liye ek).
+- Feature: **Last position yaad**. Video band karke ya app chhodke wapas aane par wahin se shuru (pehle 3 sec aur aakhri 3 sec me ho ya poora dekh liya ho to shuru se). Pichhle 100 videos yaad rehte hain.
+- Feature: **Picture-in-Picture**. Controls me PiP button, aur chalte video me Home dabane par apne aap PiP window (API 31+ auto-enter, purane me `onUserLeaveHint`). PiP window me play/pause button hai. `MainActivity` aur `ViewActivity` dono me `supportsPictureInPicture` aur `configChanges` (screenSize|smallestScreenSize|screenLayout|orientation) lage hain, taaki PiP ya rotate par activity dobara na bane (Compose khud resize handle karta hai).
+- Version: `versionName` 1.4.19 / `versionCode` 25.
+
+## Updates in 1.4.18
+
+- Feature: **Sticky date header**. Photos/Favorites/Trash/album grid me scroll karte waqt upar ek chhota date chip chipka rehta hai, taaki badi library me pata rahe kaunsi date ke photos hain. Asli header jab tak top pe dikh raha ho chip chhupa rehta hai. (`LazyVerticalGrid` me `stickyHeader` nahi hai, isliye overlay.)
+- Version: `versionName` 1.4.18 / `versionCode` 24.
+
+## Updates in 1.4.17
+
+- Feature: **Sort/filter yaad rehta hai**. Photos grid ka sort (newest/oldest/name/size) aur filter (All/Photos/Videos/GIFs/RAW) ab `GalleryPreferences` me save hota hai, app band karke kholne par bhi wahi rehta hai. "Reset" dabane par default wapas save hota hai. Picker mode me filter save nahi hota (wo doosre app ki request se aata hai).
+- Version: `versionName` 1.4.17 / `versionCode` 23.
+
+## Updates in 1.4.16
+
+- Feature: **Undo snackbar**. Photo/video trash karne ke baad "Undo" milta hai (grid aur viewer dono me). API 30+ pe wapas laane ke liye system approval dobara aata hai; API < 30 pe turant. Permanent delete undo nahi ho sakta (wo pehle se system confirmation maangta hai).
+- Feature: **Grid animations**. Trash/favorite/filter se items aur date headers jhatke ki jagah smoothly khisakte hain (`Modifier.animateItem()`). Pinch-zoom ke dauran band rehta hai taaki columns badalte waqt jhatka na aaye.
+- Version: `versionName` 1.4.16 / `versionCode` 22.
+
+## Updates in 1.4.15
+
+- Feature: **Open with**. File manager, chat app ya browser se photo/video "Fast Gallery se kholo" ho sakti hai (`ViewActivity`, `ACTION_VIEW` content/file URI). Halka alag viewer hai (library load nahi hoti): zoom, double-tap, video, details aur share chalte hain; bahar ki file par edit/trash/rename/delete/slideshow nahi (Viewer `readOnly`).
+- Feature: **Picker**. Doosre apps (`GET_CONTENT` / `PICK`, image/* aur video/*) Fast Gallery ko photo chunne ke liye dikha sakte hain. Single pick me tap karte hi wapas; `EXTRA_ALLOW_MULTIPLE` ho to tap se select aur neeche "Done (n)". Picker me trash/delete actions nahi dikhte. Image-only request pe filter Photos (GIF/RAW ke liye filter menu), video-only pe Videos se shuru hota hai.
+- Fix: Details me bahar ki file ki "Date added" 1970 nahi dikhti.
+- Version: `versionName` 1.4.15 / `versionCode` 21.
 
 ## Updates in 1.4.14
 

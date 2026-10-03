@@ -1,5 +1,6 @@
 package com.fastgallery.app.data
 
+import android.util.Log
 import android.app.WallpaperManager
 import android.app.ActivityManager
 import android.content.ContentValues
@@ -237,7 +238,8 @@ object MediaOperations {
                 val exif = ExifInterface(input)
                 exif.rotationDegrees to exif.isFlipped
             } ?: (0 to false)
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            Log.w("MediaOperations", "EXIF transform read failed: $uri", error)
             0 to false
         }
 
@@ -286,7 +288,8 @@ object MediaOperations {
             context.getString(R.string.exif_size) to formatBytes(item.sizeBytes),
             context.getString(R.string.exif_dimensions) to
                 if (item.width > 0 && item.height > 0) "${item.width} × ${item.height}" else context.getString(R.string.unknown),
-            context.getString(R.string.exif_date_added) to java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.dateAdded * 1000)),
+            context.getString(R.string.exif_date_added) to
+                if (item.dateAdded > 0) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.dateAdded * 1000)) else "",
             context.getString(R.string.exif_duration) to if (item.isVideo) formatMediaDuration(item.durationMs) else "",
         )
         if (!item.isVideo) {
@@ -306,7 +309,9 @@ object MediaOperations {
                         ExifInterface.TAG_GPS_LONGITUDE to context.getString(R.string.exif_gps_longitude),
                     ).forEach { (tag, label) -> exif.getAttribute(tag)?.takeIf(String::isNotBlank)?.let { details += label to it } }
                 }
-            } catch (_: Exception) { }
+            } catch (error: Exception) {
+                Log.w("MediaOperations", "EXIF details read failed", error)
+            }
         }
         return details.filter { it.second.isNotBlank() }
     }

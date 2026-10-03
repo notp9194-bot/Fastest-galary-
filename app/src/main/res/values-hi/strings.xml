@@ -31,6 +31,7 @@
     <string name="action_cancel">रद्द करें</string>
     <string name="action_close">बंद करें</string>
     <string name="action_done">हो गया</string>
+    <string name="action_undo">पूर्ववत करें</string>
     <string name="action_reset">रीसेट</string>
     <string name="action_continue">जारी रखें</string>
     <string name="action_move">मूव करें</string>
@@ -43,6 +44,8 @@
     <string name="badge_raw">RAW</string>
     <string name="unknown">अज्ञात</string>
     <string name="share_selected">चुनी हुई मीडिया शेयर करें</string>
+    <string name="pick_title">मीडिया चुनें</string>
+    <string name="pick_done">हो गया (%1$d)</string>
     <string name="nav_photos">फ़ोटो</string>
     <string name="nav_albums">एल्बम</string>
     <string name="nav_favorites">पसंदीदा</string>
@@ -114,6 +117,8 @@
     <string name="filter_videos">वीडियो</string>
     <string name="filter_gifs">GIF</string>
     <string name="filter_raw">RAW</string>
+    <string name="filter_active_chip">फ़िल्टर: %1$s</string>
+    <string name="action_clear_filter">फ़िल्टर हटाएँ</string>
     <string name="migrate_title">पुराना ट्रैश सिस्टम ट्रैश में ले जाएँ?</string>
     <string name="migrate_body">%1$d आइटम सिर्फ़ Fast Gallery के अपने ट्रैश में थे। इन्हें सिस्टम ट्रैश में ले जाएँ? वहाँ 30 दिन बाद ये अपने आप हट जाते हैं।</string>
     <string name="video_play">चलाएँ</string>
@@ -123,6 +128,9 @@
     <string name="video_seek">सीक बार</string>
     <string name="video_speed">प्लेबैक गति</string>
     <string name="video_speed_format">%1$sx</string>
+    <string name="video_loop_on">लूप चालू</string>
+    <string name="video_loop_off">लूप बंद</string>
+    <string name="video_pip">पिक्चर-इन-पिक्चर</string>
     <string name="details_title">फ़ोटो विवरण</string>
     <string name="rename_title">मीडिया का नाम बदलें</string>
     <string name="rename_file_name">फ़ाइल का नाम</string>

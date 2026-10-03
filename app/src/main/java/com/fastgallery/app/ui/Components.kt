@@ -119,6 +119,8 @@ fun Thumb(
     onLongClick: () -> Unit = onClick,
     /** true = long-press grid-level gesture (drag-to-select) handle karta hai; yahan sirf TalkBack action. */
     longPressHandledByGrid: Boolean = false,
+    /** Grid se aaya modifier (jaise animateItem()); sabse pehle lagta hai. */
+    modifier: Modifier = Modifier,
 ) {
     val dateLabel = remember(item.dateTaken, item.dateAdded) {
         val millis = if (item.dateTaken > 0L) item.dateTaken else item.dateAdded * 1000L
@@ -133,7 +135,7 @@ fun Thumb(
     val selectLabel = stringResource(R.string.thumb_select_action)
     val longClickAction = onLongClick
     Box(
-        Modifier
+        modifier
             .aspectRatio(1f)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .then(

@@ -40,8 +40,9 @@ data class Album(
 sealed interface GridEntry {
     val key: Any
 
-    data class Header(val label: String, val millis: Long = 0L) : GridEntry {
-        override val key: Any get() = "h_$label"
+    /** occurrence: is label ka kitva header (0 = pehla). Non-date sort me ek din ke headers dobara aate hain; key unique rehni chahiye. */
+    data class Header(val label: String, val millis: Long = 0L, val occurrence: Int = 0) : GridEntry {
+        override val key: Any get() = if (occurrence == 0) "h_$label" else "h_${label}_$occurrence"
     }
 
     data class Media(val item: MediaItem, val index: Int) : GridEntry {
@@ -60,12 +61,18 @@ fun buildEntries(items: List<MediaItem>): List<GridEntry> {
     val tz = TimeZone.getDefault()
     val out = ArrayList<GridEntry>(items.size + 64)
     var lastDay = Long.MIN_VALUE
+    val seenLabels = HashMap<String, Int>()
     for ((i, m) in items.withIndex()) {
         val ms = m.dateAdded * 1000L
         val day = (ms + tz.getOffset(ms)) / 86_400_000L
         if (day != lastDay) {
             lastDay = day
-            out += GridEntry.Header(fmt.format(Date(ms)), ms)
+            val label = fmt.format(Date(ms))
+            // Date-sorted list me har din ek hi baar aata hai; Name/Size sort me wahi din kai baar aa sakta hai.
+            // Header key unique na ho to LazyVerticalGrid "Key was already used" se crash karta hai.
+            val occurrence = seenLabels.getOrDefault(label, 0)
+            seenLabels[label] = occurrence + 1
+            out += GridEntry.Header(label, ms, occurrence)
         }
         out += GridEntry.Media(m, i)
     }

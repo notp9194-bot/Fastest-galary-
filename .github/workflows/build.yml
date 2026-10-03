@@ -52,6 +52,9 @@ jobs:
             echo "::warning::Keystore secret nahi mila - release APK debug key se sign hoga (Play Store ke liye nahi)."
           fi
 
+      - name: Unit tests
+        run: gradle testDebugUnitTest --stacktrace
+
       - name: Build debug APK + release APK/AAB
         run: gradle assembleDebug assembleRelease bundleRelease --stacktrace
 

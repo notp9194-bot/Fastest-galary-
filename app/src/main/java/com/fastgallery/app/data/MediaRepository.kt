@@ -1,5 +1,6 @@
 package com.fastgallery.app.data
 
+import android.util.Log
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.net.Uri
@@ -127,7 +128,8 @@ class MediaRepository(private val cr: ContentResolver) {
                 items = result.take(pageSize),
                 hasMore = result.size > pageSize,
             )
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            Log.e("MediaRepository", "MediaStore query failed (offset=$offset, trashedOnly=$trashedOnly)", error)
             MediaPage(items = emptyList(), hasMore = false)
         }
     }
