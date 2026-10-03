@@ -9,8 +9,9 @@ class TabSwipeTest {
     private val minFling = 60f
     private val flingV = 1800f
 
-    private fun resolve(tab: Int, raw: Float, v: Float = 0f, rtl: Boolean = false, count: Int = 5) =
-        resolveTabSwipe(tab, count, raw, v, w, minFling, flingV, rtl)
+    // w = 1000 => commit distance 10% = 100.
+    private fun resolve(tab: Int, raw: Float, v: Float = 0f, rtl: Boolean = false, count: Int = 5, cap: Float = Float.MAX_VALUE) =
+        resolveTabSwipe(tab, count, raw, v, w, minFling, flingV, rtl, cap)
 
     @Test fun stepDirectionLtrAndRtl() {
         assertEquals(-1, tabSwipeStep(50f, rtl = false))
@@ -24,16 +25,29 @@ class TabSwipeTest {
         assertEquals(0, resolve(tab = 1, raw = 300f))
     }
 
-    @Test fun shortSlowDragSnapsBack() {
-        assertNull(resolve(tab = 1, raw = -150f, v = -200f))
+    @Test fun smallDragJustPastTenPercentCommits() {
+        assertEquals(2, resolve(tab = 1, raw = -110f))
+        assertEquals(0, resolve(tab = 1, raw = 110f))
+    }
+
+    @Test fun veryShortSlowDragSnapsBack() {
+        assertNull(resolve(tab = 1, raw = -50f, v = -200f))
     }
 
     @Test fun fastFlickCommitsEvenWhenShort() {
-        assertEquals(2, resolve(tab = 1, raw = -120f, v = -2500f))
+        assertEquals(2, resolve(tab = 1, raw = -80f, v = -2500f))
     }
 
     @Test fun flickAgainstDragDirectionDoesNotCommit() {
-        assertNull(resolve(tab = 1, raw = -120f, v = 2500f))
+        assertNull(resolve(tab = 1, raw = -80f, v = 2500f))
+    }
+
+    @Test fun commitDistanceIsCappedOnWideScreens() {
+        assertEquals(100f, tabSwipeCommitDistance(1000f), 0f)
+        assertEquals(40f, tabSwipeCommitDistance(1000f, 40f), 0f)
+        // Cap ke saath 50px bhi kaafi hai; bina cap ke nahi.
+        assertEquals(2, resolve(tab = 1, raw = -50f, cap = 40f))
+        assertNull(resolve(tab = 1, raw = -50f))
     }
 
     @Test fun tinyFlickIgnored() {

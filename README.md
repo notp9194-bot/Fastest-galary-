@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.32
+# Fast Gallery 1.4.33
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -51,6 +51,17 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
 - `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
 
+## Updates in 1.4.33
+
+- **Tab swipe ab bahut sensitive**: bilkul thoda sa left/right swipe karne par tab badal jata hai. Commit distance width ka **28% -> 10%** (max 56dp, yaani phone par ~40dp). Halka flick bhi chalta hai: minimum distance 24dp -> 12dp, minimum speed 700 -> 300 dp/s.
+- Horizontal pehchan thodi narm: dx >= dy ka **1.4x** (pehle 1.6x). Vertical scroll / drag-select / pinch / slider / fast scroller ko pehle jaisa priority milti hai (jo child consume kare, swipe uska nahi hota), aur dono kinare (~20dp) back gesture ke liye khali hain.
+- Naya feedback: drag karte waqt threshold paar hote hi halka haptic tick (matlab ab chhodne par tab badlega). Wapas kheench lo to cancel ho jata hai.
+- Animation thodi tez: bahar slide 150 -> 120 ms, andar aana 260 -> 220 ms.
+- Saari values `TabSwipe.kt` ke top par constants hain (`TAB_SWIPE_*`), kam/zyada karna ho to wahin badlo. `TabSwipeTest` naye thresholds ke hisaab se update.
+- Version: `versionName` 1.4.33 / `versionCode` 39.
+
+Build/tests yahan nahi chale; real device par check karna ki galti se tab switch to nahi hota (zyada sensitive hone ka trade-off).
+
 ## Updates in 1.4.32
 
 - **Build fix (CI)**: `:app:compileDebugKotlin` fail (`Viewer.kt:650` "This foundation API is experimental"). `Modifier.transformable(canPan = ...)` `ExperimentalFoundationApi` hai, par `@OptIn` galti se `cachedAspect` par laga tha. Ab `@OptIn(ExperimentalFoundationApi::class)` `ViewerPage` par hai.
@@ -93,7 +104,7 @@ Build/tests yahan nahi chale (Gradle/SDK nahi); fix CI log ke error se pakda gay
 
 ## Updates in 1.4.27
 
-- Tabs: **left/right swipe se tab switch** (`ui/TabSwipe.kt`, `TabSwipeContainer`). Photos, Albums, Favorites, Trash, Settings ke beech content ungli ke saath chalta hai (halka fade). Chhodne par kaafi door (width ka 28%) ya tez flick ho to purana content bahar slide hota hai, naya opposite side se andar aata hai (halka haptic), warna spring se wapas. Pehle tab par daayein aur aakhri par bayein swipe me rubber-band resistance, tab nahi badalta.
+- Tabs: **left/right swipe se tab switch** (`ui/TabSwipe.kt`, `TabSwipeContainer`). Photos, Albums, Favorites, Trash, Settings ke beech content ungli ke saath chalta hai (halka fade). Chhodne par thoda sa (width ka 10%, max 56dp; 1.4.33 se) ya halka flick ho to purana content bahar slide hota hai, naya opposite side se andar aata hai (halka haptic), warna spring se wapas. Pehle tab par daayein aur aakhri par bayein swipe me rubber-band resistance, tab nahi badalta.
 - Gesture conflicts: swipe Main pass me child ke BAAD dekha jata hai, isliye drag-select, pinch zoom, Settings sliders, fast scroller aur vertical scroll pehle apna kaam karte hain. Swipe tabhi lagta hai jab chaal saaf horizontal ho (dx >= dy ka 1.6x) aur kisi ne consume na kiya ho. Screen ke dono kinare (~20dp) system back gesture ke liye chhode gaye hain. RTL me direction ulta.
 - Swipe in sab me band hai: selection mode, search khula, album ke andar, Settings sub-page, viewer, picker mode, permission screen, bulk operation chalte waqt. Bottom bar/rail se tap karke tab badalna pehle jaisa (bina animation).
 - Tab ka nishaan (nav indicator) slide-out ke baad badalta hai, jab tab asal me switch hota hai.

@@ -33,15 +33,32 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlinx.coroutines.launch
 
-/** Itna (width ka hissa) kheencho to chhodte hi tab badal jata hai. */
-internal const val TAB_SWIPE_COMMIT_FRACTION = 0.28f
+/**
+ * Itna (width ka hissa) kheencho to chhodte hi tab badal jata hai. Bahut kam rakha hai (pehle 28% tha),
+ * taaki bilkul thoda sa swipe karne par bhi tab badal jaye. Badi screen (tablet) par [TAB_SWIPE_COMMIT_MAX_DP] se cap.
+ */
+internal const val TAB_SWIPE_COMMIT_FRACTION = 0.10f
+
+/** Commit distance ki upar limit (dp). Phone par 10% width isse kam hi rehta hai (~40dp), tablet par ye lagta hai. */
+internal const val TAB_SWIPE_COMMIT_MAX_DP = 56f
+
+/** Chhoti si ungli-chaal (dp) aur halki speed (dp/sec) par bhi flick maana jaye. */
+internal const val TAB_SWIPE_MIN_FLING_DISTANCE_DP = 12f
+internal const val TAB_SWIPE_FLING_VELOCITY_DP = 300f
+
+/** Chaal horizontal tab maani jaye jab dx, dy ka itna guna ho (pehle 1.6). */
+internal const val TAB_SWIPE_HORIZONTAL_RATIO = 1.4f
 
 /** Ungli kis taraf gayi usse kaunsa tab: LTR me ungli daayein = pichhla tab, bayein = agla. RTL me ulta. */
 internal fun tabSwipeStep(raw: Float, rtl: Boolean): Int = if ((raw > 0f) != rtl) -1 else 1
 
+/** Tab badalne ke liye kam se kam kitna kheencna hai (px). */
+internal fun tabSwipeCommitDistance(widthPx: Float, commitMaxPx: Float = Float.MAX_VALUE): Float =
+    minOf(widthPx * TAB_SWIPE_COMMIT_FRACTION, commitMaxPx)
+
 /**
  * Chhodte waqt faisla: kaunse tab par jaana hai, ya null (wapas wahin).
- * Do raaste: kaafi door tak kheencha (width ka 28%), ya chhota par tez flick (velocity ke saath).
+ * Do raaste: thoda sa kheencha (width ka 10%, max [commitMaxPx]), ya aur bhi chhota par halka flick (velocity ke saath).
  * Pehle/aakhri tab ke aage koi tab nahi, isliye null.
  */
 internal fun resolveTabSwipe(
@@ -53,12 +70,13 @@ internal fun resolveTabSwipe(
     minFlingDistancePx: Float,
     flingVelocityPx: Float,
     rtl: Boolean,
+    commitMaxPx: Float = Float.MAX_VALUE,
 ): Int? {
     if (raw == 0f || widthPx <= 0f) return null
     val target = tab + tabSwipeStep(raw, rtl)
     if (target !in 0 until tabCount) return null
     val distance = abs(raw)
-    val farEnough = distance > widthPx * TAB_SWIPE_COMMIT_FRACTION
+    val farEnough = distance > tabSwipeCommitDistance(widthPx, commitMaxPx)
     val flung = distance > minFlingDistancePx &&
         abs(velocityX) > flingVelocityPx &&
         (velocityX > 0f) == (raw > 0f)
@@ -72,7 +90,7 @@ internal fun resolveTabSwipe(
  *    (halka haptic tick). Warna spring se wapas.
  *  - Child gestures ko kuch nahi chhinta: ye Main pass me child ke BAAD dekhta hai, to drag-select, pinch, slider,
  *    fast scroller, vertical scroll pehle apna kaam kar lete hain. Gesture tabhi lagta hai jab chaal saaf horizontal ho
- *    (dx, dy se ~1.6x zyada) aur kisi ne use consume na kiya ho.
+ *    (dx, dy se ~1.4x zyada) aur kisi ne use consume na kiya ho.
  *  - Screen ke dono kinare (~20dp) system back-gesture ke liye chhode gaye hain.
  * enabled = false (selection, search, album ke andar, viewer, picker...) me kuch nahi hota.
  */
@@ -101,8 +119,9 @@ fun TabSwipeContainer(
             .pointerInput(enabled, tabCount, rtl) {
                 if (!enabled) return@pointerInput
                 val edgePx = 20.dp.toPx()
-                val minFlingDistancePx = 24.dp.toPx()
-                val flingVelocityPx = 700.dp.toPx()
+                val minFlingDistancePx = TAB_SWIPE_MIN_FLING_DISTANCE_DP.dp.toPx()
+                val flingVelocityPx = TAB_SWIPE_FLING_VELOCITY_DP.dp.toPx()
+                val commitMaxPx = TAB_SWIPE_COMMIT_MAX_DP.dp.toPx()
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val width = size.width.toFloat()
@@ -127,7 +146,7 @@ fun TabSwipeContainer(
                         dx += delta.x
                         dy += delta.y
                         if (abs(dy) > slop && abs(dy) >= abs(dx)) return@awaitEachGesture
-                        if (abs(dx) > slop && abs(dx) > abs(dy) * 1.6f) {
+                        if (abs(dx) > slop && abs(dx) > abs(dy) * TAB_SWIPE_HORIZONTAL_RATIO) {
                             locked = true
                             change.consume()
                         }
@@ -140,6 +159,9 @@ fun TabSwipeContainer(
                         offsetPx = if (hasNeighbor) raw else raw * 0.25f
                     }
                     applyOffset()
+                    // Threshold paar hote hi halka tick: pata chale ki ab chhodne par tab badlega. Wapas kheencho to cancel.
+                    val commitPx = tabSwipeCommitDistance(width, commitMaxPx)
+                    var armed = false
                     while (true) {
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -148,6 +170,10 @@ fun TabSwipeContainer(
                         raw += change.positionChange().x
                         change.consume()
                         applyOffset()
+                        val hasNeighbor = (currentTab + tabSwipeStep(raw, rtl)) in 0 until tabCount
+                        val nowArmed = hasNeighbor && abs(raw) > commitPx
+                        if (nowArmed && !armed) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        armed = nowArmed
                     }
 
                     // 3) Chhodna: commit ya wapas.
@@ -161,6 +187,7 @@ fun TabSwipeContainer(
                         minFlingDistancePx = minFlingDistancePx,
                         flingVelocityPx = flingVelocityPx,
                         rtl = rtl,
+                        commitMaxPx = commitMaxPx,
                     )
                     val from = offsetPx
                     busy = true
@@ -168,14 +195,14 @@ fun TabSwipeContainer(
                         try {
                             if (target != null) {
                                 val dir = if (raw > 0f) 1f else -1f
-                                animate(from, dir * width, animationSpec = tween(150, easing = FastOutLinearInEasing)) { v, _ ->
+                                animate(from, dir * width, animationSpec = tween(120, easing = FastOutLinearInEasing)) { v, _ ->
                                     offsetPx = v
                                 }
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 currentOnTabChange(target)
                                 // Naya content opposite side se andar aata hai (same frame me, beech me khali frame nahi).
                                 offsetPx = -dir * width * 0.22f
-                                animate(offsetPx, 0f, animationSpec = tween(260, easing = LinearOutSlowInEasing)) { v, _ ->
+                                animate(offsetPx, 0f, animationSpec = tween(220, easing = LinearOutSlowInEasing)) { v, _ ->
                                     offsetPx = v
                                 }
                             } else {
