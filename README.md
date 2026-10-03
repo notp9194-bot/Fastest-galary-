@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.30
+# Fast Gallery 1.4.31
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -44,6 +44,15 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 2. Local: `keystore.properties.example` ko `keystore.properties` me copy karke values bharo, phir `gradle assembleRelease` ya `gradle bundleRelease` (Play Store ke liye AAB). `keystore.properties` aur `*.keystore` git me ignore hain.
 3. GitHub Actions: repo Secrets me `ANDROID_KEYSTORE_BASE64` (`base64 -w0 release.keystore`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` daalo. `v*` tag build bina keystore secret ke fail hota hai.
 4. Note: debug key se pehle install ki hui APK ke upar apni keystore wali APK install nahi hogi (signature alag) - uninstall karke install karo.
+
+## Updates in 1.4.31
+
+- **Settings screen redesign**: ab har setting ke saath icon. Sections rounded cards me (Appearance, Gallery, Video, Trash, Private albums), har row me rangeen icon tile + title (+ subtitle) + control. Theme aur Default sort/Slideshow speed ab FilterChips, haptics/autoplay/muted switch rows (TalkBack me "switch" ki tarah), Trash/Hidden/Locked rows me count + chevron.
+- Icons: `material-icons-extended` dependency jodi (Palette, GridView, Slideshow, Vibration, VisibilityOff, VolumeOff). Release build me R8 sirf use hue icons rakhta hai. Sort icon purana custom `SortIcon` hai.
+- Naye strings (en + hi): `settings_theme`, `settings_gallery`. `SettingsScreen` ka signature same, `MainActivity` me badlav nahi.
+- Version: `versionName` 1.4.31 / `versionCode` 37.
+
+Build/device check nahi hua (Gradle/SDK nahi). Icon ke naam compile me galat nikle to CI log bhejna.
 
 ## Play Store release files (1.4.30 ke baad)
 

@@ -31,8 +31,8 @@ android {
         applicationId = "com.fastgallery.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 36
-        versionName = "1.4.30"
+        versionCode = 37
+        versionName = "1.4.31"
     }
 
     signingConfigs {
@@ -82,6 +82,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
+    // Settings screen ke icons (Palette, GridView, Slideshow...). Release me R8 sirf use hue icons rakhta hai, APK size nahi badhta.
+    implementation("androidx.compose.material:material-icons-extended")
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.core:core-splashscreen:1.0.1")
