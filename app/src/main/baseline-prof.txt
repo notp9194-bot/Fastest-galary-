@@ -1,4 +1,4 @@
-# Fast Gallery - hand-curated baseline profile (1.4.27).
+# Fast Gallery - hand-curated baseline profile (1.4.28).
 #
 # NOTE: Ye MEASURED profile nahi hai. Ye app ke asli classes se banaya gaya hai (startup path vs. baad me
 # khulne wali screens alag). Device/emulator (API 28+) milte hi asli profile generate karo:

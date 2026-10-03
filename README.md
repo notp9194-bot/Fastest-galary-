@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.27
+# Fast Gallery 1.4.28
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -44,6 +44,13 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 2. Local: `keystore.properties.example` ko `keystore.properties` me copy karke values bharo, phir `gradle assembleRelease` ya `gradle bundleRelease` (Play Store ke liye AAB). `keystore.properties` aur `*.keystore` git me ignore hain.
 3. GitHub Actions: repo Secrets me `ANDROID_KEYSTORE_BASE64` (`base64 -w0 release.keystore`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` daalo. `v*` tag build bina keystore secret ke fail hota hai.
 4. Note: debug key se pehle install ki hui APK ke upar apni keystore wali APK install nahi hogi (signature alag) - uninstall karke install karo.
+
+## Updates in 1.4.28
+
+- **Build fix (CI)**: `:app:mergeDebugResources` fail ho raha tha ("Invalid unicode escape sequence in string"). Wajah: `values/strings.xml` ki 14 strings me bina escape wali apostrophe thi (`can't`, `Couldn't`, `wasn't`, ...: `err_not_found`, `err_permission`, `err_unsupported`, `msg_*_failed`, `msg_approval_denied`, `msg_album_auth_failed`, `msg_lock_remove_auth_failed`). Sab ko `\'` kar diya. Naye strings me apostrophe hamesha `\'` likho. `values-hi` me aisi koi string nahi thi.
+- Version: `versionName` 1.4.28 / `versionCode` 34.
+
+Build/tests yahan nahi chale (Gradle/SDK nahi); fix CI log ke error se pakda gaya hai, isliye CI dobara chalake dekhna.
 
 ## Updates in 1.4.27
 
