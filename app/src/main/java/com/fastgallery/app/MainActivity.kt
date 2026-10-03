@@ -409,7 +409,8 @@ private fun GalleryContent(
         else if (denied != null) denied()
         else notify(ctx.getString(R.string.msg_approval_denied))
     }
-    fun requestApproval(sender: android.content.IntentSender, action: () -> Unit, onDenied: (() -> Unit)? = null) {
+    // action LAST rakha hai: baaki call sites trailing lambda (requestApproval(sender) { ... }) use karte hain.
+    fun requestApproval(sender: android.content.IntentSender, onDenied: (() -> Unit)? = null, action: () -> Unit) {
         approvalAction = action
         approvalDenied = onDenied
         approvalLauncher.launch(IntentSenderRequest.Builder(sender).build())
@@ -465,9 +466,11 @@ private fun GalleryContent(
         if (Build.VERSION.SDK_INT >= 30) {
             runCatching {
                 val request = MediaStore.createDeleteRequest(ctx.contentResolver, items.map { it.uri })
-                requestApproval(request.intentSender, action, onDenied = movedTo?.let { dest ->
-                    { notify(ctx.getString(R.string.msg_move_denied, dest), long = true) }
-                })
+                requestApproval(
+                    request.intentSender,
+                    onDenied = movedTo?.let { dest -> { notify(ctx.getString(R.string.msg_move_denied, dest), long = true) } },
+                    action = action,
+                )
             }.onFailure {
                 if (movedTo != null) notify(ctx.getString(R.string.msg_move_denied, movedTo), long = true)
                 else notify(ctx.getString(R.string.msg_delete_request_failed), long = true)
@@ -485,7 +488,7 @@ private fun GalleryContent(
         }
         if (Build.VERSION.SDK_INT >= 30) {
             runCatching {
-                requestApproval(MediaStore.createWriteRequest(ctx.contentResolver, listOf(item.uri)).intentSender, action)
+                requestApproval(MediaStore.createWriteRequest(ctx.contentResolver, listOf(item.uri)).intentSender, action = action)
             }.onFailure { notify(ctx.getString(R.string.msg_write_request_failed), long = true) }
         } else action()
     }

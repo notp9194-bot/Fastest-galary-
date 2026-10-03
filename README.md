@@ -51,6 +51,11 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
 - `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
 
+## Updates in 1.4.49
+
+- **CI build fix:** 1.4.46 me `requestApproval` ko `onDenied` param mila tha `action` ke baad, to trailing-lambda call sites (`requestApproval(sender) { ... }`) ka lambda `onDenied` me chala gaya aur `compileDebugKotlin` fail hua ("No value passed for parameter 'action'"). Ab `action` last parameter hai; `deleteMedia` aur `renameMedia` ke positional calls named (`action = action`) kiye.
+- Version: `versionName` 1.4.49 / `versionCode` 55.
+
 ## Updates in 1.4.48
 
 - **Splash ka hold poora hata diya.** `setKeepOnScreenCondition` aur `GalleryViewModel.startupResolved` hata diye (1.4.47 me cache-read tak max 250ms rukti thi). Ab splash pehla frame bante hi hat jaati hai (system icon flash, koi custom splash nahi).
