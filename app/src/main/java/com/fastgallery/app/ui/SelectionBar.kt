@@ -28,7 +28,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -63,14 +62,31 @@ val DeleteForeverIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
     )
 }
 
-/** Multi-select ke waqt neeche dikhne wala action bar: Share, Favorite, Copy/Move (Trash tab me nahi), Trash/Restore, Delete. */
+/** Material "Content copy" icon (extended icons dependency ke bina). */
+val CopyIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+    materialIcon(
+        "ContentCopy",
+        "M16,1L4,1c-1.1,0 -2,0.9 -2,2v14h2L4,3h12L16,1zM19,5L8,5c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h11c1.1,0 2,-0.9 2,-2L21,7c0,-1.1 -0.9,-2 -2,-2zM19,21L8,21L8,7h11v14z",
+    )
+}
+
+/** Material "Drive file move" icon (folder + arrow; extended icons dependency ke bina). */
+val MoveIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+    materialIcon(
+        "DriveFileMove",
+        "M20,6h-8l-2,-2H4c-1.1,0 -1.99,0.9 -1.99,2L2,18c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V8c0,-1.1 -0.9,-2 -2,-2zM12,17v-3H8v-2h4V9l4,4 -4,4z",
+    )
+}
+
+/** Multi-select ke waqt neeche dikhne wala action bar: Share, Favorite, Copy, Move (dono alag; Trash tab me nahi), Trash/Restore, Delete. */
 @Composable
 fun SelectionActionBar(
     inTrash: Boolean,
     allFavorite: Boolean,
     onShare: () -> Unit,
     onFavorite: () -> Unit,
-    onCopyMove: () -> Unit,
+    onCopy: () -> Unit,
+    onMove: () -> Unit,
     onTrashOrRestore: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -93,13 +109,11 @@ fun SelectionActionBar(
                 stringResource(if (allFavorite) R.string.action_unfavorite_short else R.string.action_favorite_short),
                 onFavorite,
             )
-            // Trash me pade items copy/move nahi hote (pehle Restore karo). Icon: nav bar wala ic_albums (folder) hi reuse.
+            // Trash me pade items copy/move nahi hote (pehle Restore karo).
+            // Copy aur Move alag buttons: user ko action chunte waqt hi pata ho ki original rahega ya hatega.
             if (!inTrash) {
-                SelectionAction(
-                    ImageVector.vectorResource(R.drawable.ic_albums),
-                    stringResource(R.string.action_copy_move_short),
-                    onCopyMove,
-                )
+                SelectionAction(CopyIcon, stringResource(R.string.action_copy_short), onCopy)
+                SelectionAction(MoveIcon, stringResource(R.string.action_move_short), onMove)
             }
             SelectionAction(
                 if (inTrash) Icons.Filled.Refresh else Icons.Filled.Delete,
@@ -121,7 +135,7 @@ private fun SelectionAction(
     Column(
         Modifier
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 6.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))

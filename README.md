@@ -51,6 +51,39 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
 - `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
 
+## Updates in 1.4.48
+
+- **Splash ka hold poora hata diya.** `setKeepOnScreenCondition` aur `GalleryViewModel.startupResolved` hata diye (1.4.47 me cache-read tak max 250ms rukti thi). Ab splash pehla frame bante hi hat jaati hai (system icon flash, koi custom splash nahi).
+  - Cache hit: cached pehla page; cache miss / first install: `SkeletonGrid`. Asli data aate hi replace.
+  - Trade-off: cache hit par bhi 1-2 frame skeleton dikh sakta hai (cache disk se async padhta hai). Zyada khatakta ho to 1.4.47 wala 250ms cache-read hold wapas laga sakte hain.
+- Version: `versionName` 1.4.48 / `versionCode` 54.
+
+Build/tests yahan nahi chale. `adb shell am start -W -S com.fastgallery.app/.MainActivity` ka `TotalTime` 1.4.47 vs 1.4.48 compare karo.
+
+## Updates in 1.4.47
+
+- **Splash har baar dikhti thi / cold start slow lagta tha.** `MainActivity` splash ko pehla page aane tak (max 700ms) rokta tha, yani MediaStore query ka intezaar. Ab:
+  - Splash sirf **cache-read** tak rukti hai (`GalleryViewModel.startupResolved`, hit ya miss), safety cap 250ms. MediaStore query ka intezaar nahi.
+  - Cache miss (first install / cache nahi) pe splash turant hat jaati hai aur `SkeletonGrid` dikhta hai; asli data aate hi replace.
+  - Cache hit pe pichhli baar ka pehla page turant dikhta hai (pehle jaisa), asli query background me.
+  - Splash me sirf icon (system SplashScreen API); koi custom splash activity / extra animation nahi.
+- Version: `versionName` 1.4.47 / `versionCode` 53.
+
+Build/tests yahan nahi chale. Device par check: `adb shell am start -W -S com.fastgallery.app/.MainActivity` ka `TotalTime` 1.4.46 vs 1.4.47 (3-4 baar average), aur first install par skeleton ka flash dekho.
+
+## Updates in 1.4.46
+
+- **Bug fix: Copy aur Move ek saath mixed the.** Pehle ek hi "Copy/Move" entry thi aur picker ke andar chhota "Delete original" switch (default off); move ke baad bhi "Copied to X" dikhta tha, to user ko pata nahi chalta tha original raha ya gaya. Ab dono alag actions hain (jaise Google Files / Samsung Gallery):
+  - Multi-select bar: **Copy** aur **Move** alag buttons (6 actions, har ka padding 10dp -> 6dp). Naye icons `CopyIcon` / `MoveIcon` (`SelectionBar.kt`).
+  - Viewer ke 3-dot menu me "Copy to…" aur "Move to…" alag items.
+  - `AlbumPickerSheet` ko ab `move: Boolean` bahar se milta hai; switch hata diya. Title "Copy to album" / "Move to album" + ek line hint ("original rahega" / "original hat jayega").
+  - Move ke baad result saaf: "Moved to X" / "Moved N items to X" (pehle "Copied to X"). `deleteMedia(items, movedTo)` Move ka delete-half hai.
+  - Move me Android approval deny ho to: "Copied to X, but the original was not removed. It is now in both albums." Delete beech me fail/partial ho to bhi alag message. Move fail/cancel par "Originals were kept".
+  - Strings (en + hi): `action_copy`, `action_move_to`, `action_copy_short`, `action_move_short`, `move_title`, `copy_hint`, `move_hint`, `msg_moved`, `msg_moved_n`, `msg_move_denied`, `msg_move_delete_failed`, `msg_move_partial`, `msg_move_failed`, `msg_move_cancelled`. Hataye: `action_copy_move`, `action_copy_move_short`, `copy_delete_original`.
+- Version: `versionName` 1.4.46 / `versionCode` 52.
+
+Build/tests yahan nahi chale (Gradle/SDK nahi tha). Device par check karo: selection me Copy aur Move dono alag dikhein, Move ke baad "Moved to X" aaye, approval cancel karne par "Copied ... both albums" wala message aaye.
+
 ## Updates in 1.4.45
 
 - **Grid-level tap + cell ka selected/favorite derived (P3 #5)**: pehle har `Thumb` par alag `clickable` (pointer node + interaction state + ripple) tha, aur `selected` / `favorite` Boolean param the. Selection ke har badlav (drag-select ke har step) par `MediaGrid` ka item block dobara chalta tha, har cell ko naye lambdas milte the aur saare visible cells recompose hote the. Ab:

@@ -25,7 +25,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -48,28 +47,29 @@ import com.fastgallery.app.data.Album
 import com.fastgallery.app.data.MediaItem
 
 /**
- * Copy/move ke liye album picker: existing albums ki list (cover + naam + count) aur sabse upar "New album".
+ * Copy YA move ke liye album picker (mode bahar se aata hai, picker ke andar badalta nahi): existing albums ki list (cover + naam + count) aur sabse upar "New album".
  * Album tap karte hi kaam shuru; folder ka naam type nahi karna padta.
  * onPick(naam, relativePath, move): relativePath = album ka asli folder (null = naya album, naam se banega).
  */
 @Composable
 fun AlbumPickerSheet(
     source: MediaItem,
+    move: Boolean,
     albums: List<Album>,
     onDismiss: () -> Unit,
     onPick: (name: String, relativePath: String?, move: Boolean) -> Unit,
-) = AlbumPickerSheet(listOf(source), albums, onDismiss, onPick)
+) = AlbumPickerSheet(listOf(source), move, albums, onDismiss, onPick)
 
 /** Kai items ke liye: album "current" (move me disabled) tabhi maana jaata hai jab SAARE items usi album me hon. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AlbumPickerSheet(
     sources: List<MediaItem>,
+    move: Boolean,
     albums: List<Album>,
     onDismiss: () -> Unit,
     onPick: (name: String, relativePath: String?, move: Boolean) -> Unit,
 ) {
-    var move by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
     val thumbPx = with(LocalDensity.current) { 48.dp.roundToPx() }
@@ -80,22 +80,19 @@ fun AlbumPickerSheet(
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility),
         ) {
+            // Mode (Copy ya Move) action chunte waqt hi tay ho chuka hai: title aur hint se saaf dikhta hai
+            // ki original rahega ya hatega. Pehle yahan ek chhota switch tha jo aksar dikhta hi nahi tha.
             Text(
-                stringResource(R.string.copy_title),
+                stringResource(if (move) R.string.move_title else R.string.copy_title),
                 style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 4.dp),
+                modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 2.dp),
             )
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    stringResource(R.string.copy_delete_original),
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Switch(checked = move, onCheckedChange = { move = it })
-            }
+            Text(
+                stringResource(if (move) R.string.move_hint else R.string.copy_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 8.dp),
+            )
             LazyColumn(Modifier.weight(1f, fill = false)) {
                 item(key = "new_album") {
                     PickerRow(

@@ -11,7 +11,6 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import android.content.res.Configuration
-import android.os.SystemClock
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.fastgallery.app.ui.PipController
 import androidx.biometric.BiometricManager
@@ -146,19 +145,15 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        val splash = installSplashScreen()
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // MediaStore query composition se pehle hi shuru: Compose setup ke saath parallel chalti hai.
         val vm = ViewModelProvider(this)[GalleryViewModel::class.java]
         val access = hasMediaAccess(this)
         if (access) vm.refreshIfNeeded()
-        // Splash tab tak jab tak pehla page aa na jaye (disk cache ya MediaStore, jo pehle), par 700ms se zyada nahi.
-        // Cache hit pe state.loading kuch ms me false ho jaata hai, to splash 700ms tak rukta hi nahi.
-        val splashStart = SystemClock.uptimeMillis()
-        splash.setKeepOnScreenCondition {
-            access && vm.state.value.loading && SystemClock.uptimeMillis() - splashStart < 700L
-        }
+        // Splash ko koi hold nahi: pehla frame bante hi hat jaati hai (system icon flash). Pehla content:
+        // cache hit pe pichhla pehla page, warna SkeletonGrid; asli data aate hi replace.
         setContent { GalleryRoot(vm) }
     }
 
@@ -323,9 +318,12 @@ private fun GalleryContent(
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val tick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) }
     var selected by remember { mutableStateOf(setOf<String>()) }
-    // Multi-select se Copy/Move: album picker sheet jin items ke liye khuli hai (null = band).
+    // Multi-select se Copy / Move: album picker sheet jin items ke liye khuli hai (null = band). Dono alag state:
+    // mode action chunte waqt hi tay hota hai, picker me badalta nahi.
     var copyTargets by remember { mutableStateOf<List<MediaItem>?>(null) }
+    var moveTargets by remember { mutableStateOf<List<MediaItem>?>(null) }
     var approvalAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var approvalDenied by remember { mutableStateOf<(() -> Unit)?>(null) }
     // Bulk delete/copy ka progress. Cancel flag background loop padhta hai (coroutine cancel nahi: cleanup Main pe chahiye).
     var bulk by remember { mutableStateOf<BulkProgress?>(null) }
     val bulkCancel = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
@@ -404,15 +402,23 @@ private fun GalleryContent(
 
     val approvalLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         val action = approvalAction
+        val denied = approvalDenied
         approvalAction = null
+        approvalDenied = null
         if (result.resultCode == Activity.RESULT_OK) action?.invoke()
+        else if (denied != null) denied()
         else notify(ctx.getString(R.string.msg_approval_denied))
     }
-    fun requestApproval(sender: android.content.IntentSender, action: () -> Unit) {
+    fun requestApproval(sender: android.content.IntentSender, action: () -> Unit, onDenied: (() -> Unit)? = null) {
         approvalAction = action
+        approvalDenied = onDenied
         approvalLauncher.launch(IntentSenderRequest.Builder(sender).build())
     }
-    fun deleteMedia(items: List<MediaItem>) {
+    /**
+     * movedTo != null => ye delete "Move" ka doosra half hai (copy ho chuki): messages Move ke hisaab se aate hain
+     * ("Moved to X"), aur approval deny hone par saaf bataya jaata hai ki sirf copy bani, original rakha gaya.
+     */
+    fun deleteMedia(items: List<MediaItem>, movedTo: String? = null) {
         if (items.isEmpty()) return
         val action: () -> Unit = action@{
             if (bulk != null) return@action
@@ -443,6 +449,12 @@ private fun GalleryContent(
                 vm.refreshPreferences()
                 vm.load()
                 when {
+                    movedTo != null && failure != null ->
+                        notify(ctx.getString(R.string.msg_move_delete_failed, movedTo, friendlyError(ctx, failure)), long = true)
+                    movedTo != null && done < total ->
+                        notify(ctx.getString(R.string.msg_move_partial, done, total, movedTo), long = true)
+                    movedTo != null && total == 1 -> notify(ctx.getString(R.string.msg_moved, movedTo))
+                    movedTo != null -> notify(ctx.getString(R.string.msg_moved_n, total, movedTo))
                     failure != null -> notify(ctx.getString(R.string.msg_delete_failed, friendlyError(ctx, failure)), long = true)
                     done < total -> notify(ctx.getString(R.string.msg_delete_partial, done, total))
                     else -> notify(ctx.getString(R.string.msg_deleted))
@@ -453,8 +465,13 @@ private fun GalleryContent(
         if (Build.VERSION.SDK_INT >= 30) {
             runCatching {
                 val request = MediaStore.createDeleteRequest(ctx.contentResolver, items.map { it.uri })
-                requestApproval(request.intentSender, action)
-            }.onFailure { notify(ctx.getString(R.string.msg_delete_request_failed), long = true) }
+                requestApproval(request.intentSender, action, onDenied = movedTo?.let { dest ->
+                    { notify(ctx.getString(R.string.msg_move_denied, dest), long = true) }
+                })
+            }.onFailure {
+                if (movedTo != null) notify(ctx.getString(R.string.msg_move_denied, movedTo), long = true)
+                else notify(ctx.getString(R.string.msg_delete_request_failed), long = true)
+            }
         } else action()
     }
     fun renameMedia(item: MediaItem, name: String) {
@@ -520,14 +537,18 @@ private fun GalleryContent(
                 if (copied.isNotEmpty()) vm.load()
                 val completed = failure == null && !cancelled
                 when {
+                    // Move adhoora reh gaya: originals koi nahi hata, isliye "Copied X of Y" hi sach hai.
                     !completed && copied.isNotEmpty() ->
                         notify(ctx.getString(R.string.msg_copy_partial, copied.size, total), long = true)
-                    failure != null -> notify(ctx.getString(R.string.msg_copy_failed, friendlyError(ctx, failure)), long = true)
-                    cancelled -> notify(ctx.getString(R.string.msg_copy_cancelled))
+                    failure != null ->
+                        notify(ctx.getString(if (move) R.string.msg_move_failed else R.string.msg_copy_failed, friendlyError(ctx, failure)), long = true)
+                    cancelled -> notify(ctx.getString(if (move) R.string.msg_move_cancelled else R.string.msg_copy_cancelled))
+                    // Move me yahan "Copied" nahi dikhate: result "Moved to X" delete ke baad deleteMedia dikhata hai.
+                    move -> Unit
                     single -> notify(ctx.getString(R.string.msg_copied, folder))
                     else -> notify(ctx.getString(R.string.msg_copied_n, copied.size, folder))
                 }
-                if (move && completed && copied.isNotEmpty()) deleteMedia(copied)
+                if (move && completed && copied.isNotEmpty()) deleteMedia(copied, movedTo = folder)
             }
         }
     }
@@ -858,7 +879,8 @@ private fun GalleryContent(
                                 .forEach { GalleryPreferences.toggleFavorite(ctx, it) }
                             vm.refreshPreferences()
                         },
-                        onCopyMove = { copyTargets = picked },
+                        onCopy = { copyTargets = picked },
+                        onMove = { moveTargets = picked },
                         onTrashOrRestore = {
                             selected = emptySet()
                             trashMedia(picked, tab != 3)
@@ -1218,9 +1240,19 @@ private fun GalleryContent(
         copyTargets?.let { targets ->
             AlbumPickerSheet(
                 sources = targets,
+                move = false,
                 albums = pickerAlbums,
                 onDismiss = { copyTargets = null },
-                onPick = { name, path, move -> copyOrMoveMedia(targets, name, move, path); copyTargets = null },
+                onPick = { name, path, _ -> copyOrMoveMedia(targets, name, false, path); copyTargets = null },
+            )
+        }
+        moveTargets?.let { targets ->
+            AlbumPickerSheet(
+                sources = targets,
+                move = true,
+                albums = pickerAlbums,
+                onDismiss = { moveTargets = null },
+                onPick = { name, path, _ -> copyOrMoveMedia(targets, name, true, path); moveTargets = null },
             )
         }
         BulkProgressBar(

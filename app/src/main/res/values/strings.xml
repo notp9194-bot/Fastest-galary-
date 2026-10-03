@@ -16,14 +16,16 @@
     <string name="action_more">More options</string>
     <string name="action_delete_permanently">Delete permanently</string>
     <string name="action_rename">Rename</string>
-    <string name="action_copy_move">Copy / move</string>
+    <string name="action_copy">Copy to…</string>
+    <string name="action_move_to">Move to…</string>
     <string name="action_details">Details</string>
     <string name="action_wallpaper">Set as wallpaper</string>
     <string name="selected_count">%d selected</string>
     <string name="action_select_all">Select all</string>
     <string name="action_deselect_all">Deselect all</string>
     <string name="action_favorite_short">Favorite</string>
-    <string name="action_copy_move_short">Copy/Move</string>
+    <string name="action_copy_short">Copy</string>
+    <string name="action_move_short">Move</string>
     <string name="action_unfavorite_short">Unfavorite</string>
     <string name="action_trash_short">Trash</string>
     <string name="action_restore_short">Restore</string>
@@ -185,7 +187,10 @@
     <string name="rename_title">Rename media</string>
     <string name="rename_file_name">File name</string>
     <string name="rename_confirm">Rename</string>
-    <string name="copy_title">Copy or move to album</string>
+    <string name="copy_title">Copy to album</string>
+    <string name="move_title">Move to album</string>
+    <string name="copy_hint">A copy is added. The original stays where it is.</string>
+    <string name="move_hint">The original is removed from its current album.</string>
     <string name="bulk_deleting">Deleting %1$d of %2$d</string>
     <string name="bulk_copying">Copying…</string>
     <string name="bulk_moving">Moving…</string>
@@ -193,10 +198,10 @@
     <string name="bulk_moving_n">Moving %1$d of %2$d</string>
     <string name="msg_delete_partial">Deleted %1$d of %2$d</string>
     <string name="msg_copy_cancelled">Copy cancelled</string>
+    <string name="msg_move_cancelled">Move cancelled. Originals were kept.</string>
     <string name="copy_new_album">New album</string>
     <string name="copy_current_album">%1$d · Current album</string>
     <string name="copy_folder_name">Album / folder name</string>
-    <string name="copy_delete_original">Delete original after copy</string>
 
     <!-- Edit dialog -->
     <string name="edit_title">Edit · %1$s</string>
@@ -282,6 +287,12 @@
     <string name="msg_album_auth_failed">Couldn\'t verify it\'s you. The album stays locked.</string>
     <string name="msg_copied">Copied to %1$s</string>
     <string name="msg_copy_failed">Couldn\'t copy. %1$s</string>
+    <string name="msg_move_failed">Couldn\'t move. Originals were kept. %1$s</string>
+    <string name="msg_moved">Moved to %1$s</string>
+    <string name="msg_moved_n">Moved %1$d items to %2$s</string>
+    <string name="msg_move_denied">Copied to %1$s, but the original was not removed. It is now in both albums.</string>
+    <string name="msg_move_delete_failed">Copied to %1$s, but couldn\'t remove the original. %2$s</string>
+    <string name="msg_move_partial">Moved %1$d of %2$d to %3$s. The rest are now in both albums.</string>
     <string name="msg_copied_n">Copied %1$d items to %2$s</string>
     <string name="msg_copy_partial">Copied %1$d of %2$d. Originals were kept.</string>
     <string name="msg_wallpaper_set">Wallpaper set</string>

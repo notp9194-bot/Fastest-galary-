@@ -149,7 +149,9 @@ fun Viewer(
     var slideshow by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf<MediaItem?>(null) }
     var renameTarget by remember { mutableStateOf<MediaItem?>(null) }
+    // Copy aur Move alag actions hain: picker ko pata hona chahiye kaunsa mode (move=true => original hatega).
     var copyTarget by remember { mutableStateOf<MediaItem?>(null) }
+    var moveTarget by remember { mutableStateOf<MediaItem?>(null) }
     var editTarget by remember { mutableStateOf<MediaItem?>(null) }
     var renameText by remember { mutableStateOf("") }
     var moreMenu by remember { mutableStateOf(false) }
@@ -390,10 +392,17 @@ fun Viewer(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text(stringResource(R.string.action_copy_move)) },
+                                text = { Text(stringResource(R.string.action_copy)) },
                                 onClick = {
                                     moreMenu = false
                                     copyTarget = item
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.action_move_to)) },
+                                onClick = {
+                                    moreMenu = false
+                                    moveTarget = item
                                 },
                             )
                             if (!item.isVideo) {
@@ -466,9 +475,19 @@ fun Viewer(
     copyTarget?.let { item ->
         AlbumPickerSheet(
             source = item,
+            move = false,
             albums = albums,
             onDismiss = { copyTarget = null },
-            onPick = { name, path, move -> onCopyOrMove(item, name, move, path); copyTarget = null },
+            onPick = { name, path, _ -> onCopyOrMove(item, name, false, path); copyTarget = null },
+        )
+    }
+    moveTarget?.let { item ->
+        AlbumPickerSheet(
+            source = item,
+            move = true,
+            albums = albums,
+            onDismiss = { moveTarget = null },
+            onPick = { name, path, _ -> onCopyOrMove(item, name, true, path); moveTarget = null },
         )
     }
     editTarget?.let { item -> EditDialog(item, onDismiss = { editTarget = null }) { edit ->
