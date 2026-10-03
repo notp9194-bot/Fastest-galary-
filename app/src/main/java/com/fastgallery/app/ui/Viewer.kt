@@ -478,7 +478,6 @@ fun Viewer(
     } }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 /**
  * Memory cache me pade thumbnail (grid / viewer placeholder) se photo ka dikhne wala aspect ratio (w/h).
  * Thumbnail me EXIF rotation pehle se lagi hoti hai, isliye MediaStore ke width/height se behtar hai.
@@ -495,6 +494,7 @@ internal fun cachedAspect(ctx: Context, uri: Uri): Float {
     return 0f
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ViewerPage(
     item: MediaItem,

@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.31
+# Fast Gallery 1.4.32
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -50,6 +50,13 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - `docs/privacy-policy.html` (+ `play-store/PRIVACY_POLICY.md`): privacy policy. GitHub Pages se `/docs` host karo. `[DEVELOPER NAME]` aur `[CONTACT EMAIL]` bharna baaki hai.
 - `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
 - `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
+
+## Updates in 1.4.32
+
+- **Build fix (CI)**: `:app:compileDebugKotlin` fail (`Viewer.kt:650` "This foundation API is experimental"). `Modifier.transformable(canPan = ...)` `ExperimentalFoundationApi` hai, par `@OptIn` galti se `cachedAspect` par laga tha. Ab `@OptIn(ExperimentalFoundationApi::class)` `ViewerPage` par hai.
+- Version: `versionName` 1.4.32 / `versionCode` 38.
+
+Build yahan nahi chala; fix CI log ke error se pakda gaya hai.
 
 ## Updates in 1.4.31
 
