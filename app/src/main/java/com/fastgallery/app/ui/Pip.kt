@@ -34,6 +34,8 @@ object PipController {
     private var playing = false
     private var aspect = Rational(16, 9)
 
+    // `inPip` ka private setter JVM me setInPip(Boolean) banata hai; isi naam ka function clash karta tha.
+    @JvmName("updateInPip")
     fun setInPip(value: Boolean) {
         inPip = value
     }
