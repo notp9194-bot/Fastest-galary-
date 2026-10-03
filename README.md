@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.33
+# Fast Gallery 1.4.34
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -50,6 +50,17 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - `docs/privacy-policy.html` (+ `play-store/PRIVACY_POLICY.md`): privacy policy. GitHub Pages se `/docs` host karo. `[DEVELOPER NAME]` aur `[CONTACT EMAIL]` bharna baaki hai.
 - `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
 - `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
+
+## Updates in 1.4.34
+
+- **Fast scroll placeholder** (Google Photos jaisa): tez fling ya fast-scroller jump me jin cells ka thumbnail memory-cache me nahi hota, wo grey placeholder rehte hain aur decode shuru nahi hota. Scroll dheema/ruka hote hi (~80-160 ms) thumbnails load hote hain, halke fade-in (120 ms) ke saath. Memory-cache wale thumbnails fast scroll me bhi turant dikhte hain.
+- Detector `ui/ScrollPlaceholder.kt` (`rememberFastScrolling`): scroll chalte waqt hi, har 80 ms par ek beech wale visible item ka pixel-offset badlav naapta hai (screen height / sec). Enter 2.5, exit 1.2 (hysteresis, flicker nahi). Item gayab = bada jump = fast. Constants `FAST_SCROLL_*` file ke top par.
+- `Thumb(deferLoad = ...)`: ek baar load hua cell kabhi wapas grey nahi hota. Sirf Photos grid (`MediaGrid`) me laga hai; baaki jagah behavior pehle jaisa.
+- Android 10 se neeche memory-cache key pata nahi hota, isliye wahan fast scroll me har naya cell grey rehta hai (decode wahan zyada mehnga hai, to fayda bhi zyada).
+- Tests: `ScrollPlaceholderTest` (hysteresis).
+- Version: `versionName` 1.4.34 / `versionCode` 40.
+
+Build/tests yahan nahi chale. Device par check karna: thresholds (2.5 / 1.2) fling friction 0.015 ke hisaab se tune karne pad sakte hain.
 
 ## Updates in 1.4.33
 

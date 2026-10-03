@@ -273,6 +273,8 @@ fun MediaGrid(
         map
     }
     val gridState = rememberLazyGridState()
+    // Fast scroll me (fling / scrubber jump) naye cells grey placeholder rehte hain; ruk ke thumbnail load hote hain.
+    val fastScrolling = rememberFastScrolling(gridState)
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val currentSelected by rememberUpdatedState(selected)
@@ -615,6 +617,7 @@ fun MediaGrid(
                         },
                         onLongClick = { onToggleSelection(entry.item) },
                         longPressHandledByGrid = true,
+                        deferLoad = fastScrolling.value,
                     )
                 }
             }

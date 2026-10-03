@@ -35,7 +35,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +57,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.imageLoader
+import coil.memory.MemoryCache
 import coil.request.ImageRequest
 import coil.size.Precision
 import coil.size.Scale
@@ -169,17 +174,22 @@ fun rememberViewerRequest(uri: Uri, size: Int): ImageRequest {
  * purane Android pe sampled Coil decode.
  */
 @Composable
-fun rememberThumbRequest(uri: Uri, size: Int): ImageRequest {
+fun rememberThumbRequest(uri: Uri, size: Int, fadeIn: Boolean = false): ImageRequest {
     val ctx = LocalContext.current
-    return remember(uri, size) {
+    return remember(uri, size, fadeIn) {
         val data: Any = if (Build.VERSION.SDK_INT >= 29) ThumbData(uri, size) else uri
         ImageRequest.Builder(ctx)
             .data(data)
             .size(size)
             .precision(Precision.INEXACT)
+            .apply { if (fadeIn) crossfade(THUMB_FADE_IN_MS) }
             .build()
     }
 }
+
+/** Thumbnail memory-cache me pehle se hai? (API 29+ ka ThumbKeyer key; purane Android par pata nahi => false.) */
+private fun isThumbCached(ctx: Context, uri: Uri, size: Int): Boolean =
+    Build.VERSION.SDK_INT >= 29 && ctx.imageLoader.memoryCache?.get(MemoryCache.Key("thumb:$uri:$size")) != null
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -195,7 +205,17 @@ fun Thumb(
     longPressHandledByGrid: Boolean = false,
     /** Grid se aaya modifier (jaise animateItem()); sabse pehle lagta hai. */
     modifier: Modifier = Modifier,
+    /**
+     * true = fast scroll chal raha hai: jis cell ka thumbnail memory-cache me nahi, wo grey placeholder rehta hai
+     * (decode shuru nahi hota). Scroll dheema/ruka hote hi load hota hai (halka fade-in). Jo cell ek baar load ho chuka
+     * wo kabhi wapas grey nahi hota.
+     */
+    deferLoad: Boolean = false,
 ) {
+    val ctx = LocalContext.current
+    val startedLoaded = remember(item.uri, sizePx) { !deferLoad || isThumbCached(ctx, item.uri, sizePx) }
+    var loadNow by remember(item.uri, sizePx) { mutableStateOf(startedLoaded) }
+    LaunchedEffect(deferLoad) { if (!deferLoad) loadNow = true }
     val dateLabel = remember(item.dateTaken, item.dateAdded) {
         val millis = if (item.dateTaken > 0L) item.dateTaken else item.dateAdded * 1000L
         java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(millis))
@@ -238,12 +258,14 @@ fun Thumb(
                 if (longPressHandledByGrid) onLongClick(label = selectLabel) { longClickAction(); true }
             }
     ) {
-        AsyncImage(
-            model = rememberThumbRequest(item.uri, sizePx),
-            contentDescription = description,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-        )
+        if (loadNow) {
+            AsyncImage(
+                model = rememberThumbRequest(item.uri, sizePx, fadeIn = !startedLoaded),
+                contentDescription = description,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         if (item.isVideo) {
             Row(
                 Modifier
