@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.28
+# Fast Gallery 1.4.29
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -44,6 +44,13 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 2. Local: `keystore.properties.example` ko `keystore.properties` me copy karke values bharo, phir `gradle assembleRelease` ya `gradle bundleRelease` (Play Store ke liye AAB). `keystore.properties` aur `*.keystore` git me ignore hain.
 3. GitHub Actions: repo Secrets me `ANDROID_KEYSTORE_BASE64` (`base64 -w0 release.keystore`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` daalo. `v*` tag build bina keystore secret ke fail hota hai.
 4. Note: debug key se pehle install ki hui APK ke upar apni keystore wali APK install nahi hogi (signature alag) - uninstall karke install karo.
+
+## Updates in 1.4.29
+
+- **Build fix (CI)**: `:app:compileDebugKotlin` fail ("The API of this layout is experimental"). `WindowInsets.navigationBarsIgnoringVisibility` / `statusBarsIgnoringVisibility` `ExperimentalLayoutApi` hain; `AlbumPicker.kt`, `VideoPlayer.kt`, `Viewer.kt` me file-level `@file:OptIn(ExperimentalLayoutApi::class)` lagaya.
+- Version: `versionName` 1.4.29 / `versionCode` 35.
+
+Gradle yahan nahi chala; fix CI log ke error se pakda gaya hai.
 
 ## Updates in 1.4.28
 

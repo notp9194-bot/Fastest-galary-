@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.fastgallery.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
