@@ -566,7 +566,9 @@ private fun GalleryContent(
     val wideLayout = LocalConfiguration.current.screenWidthDp >= 600
     Box(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxSize()) {
-            if (wideLayout && viewerIndex < 0) {
+            // Rail/pill viewer ke peeche bhi composed rehte hain (viewer unhe dhak leta hai): nahi to open pe gayab
+            // aur close ke baad achanak wapas bante the (jhatka).
+            if (wideLayout) {
                 GalleryNavRail(
                     tab = tab,
                     onSelect = { index ->
@@ -583,7 +585,7 @@ private fun GalleryContent(
                     .fillMaxHeight()
                     // Rail ke saath side ka system inset dobara na lage.
                     .then(
-                        if (wideLayout && viewerIndex < 0) {
+                        if (wideLayout) {
                             Modifier.consumeWindowInsets(
                                 WindowInsets.systemBars.union(WindowInsets.displayCutout)
                                     .only(WindowInsetsSides.Start),
@@ -700,7 +702,7 @@ private fun GalleryContent(
                         },
                         onDelete = { deleteMedia(picked) },
                     )
-                } else if (viewerIndex < 0 && !wideLayout) {
+                } else if (!wideLayout) {
                     Surface(
                         modifier = Modifier
                             .navigationBarsPadding()

@@ -18,9 +18,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -139,12 +141,15 @@ fun Viewer(
     var moveAfterCopy by remember { mutableStateOf(false) }
     var moreMenu by remember { mutableStateOf(false) }
 
-    DisposableEffect(Unit) {
-        val window = ctx.findActivity()?.window
-        val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
-        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller?.hide(WindowInsetsCompat.Type.systemBars())
-        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+    // System bars: open animation ke baad chhupte hain, close animation SHURU hote hi wapas aate hain.
+    // (Pehle open pe turant chhupte aur close khatam hone ke baad aate the, isse peeche ka screen jhatke se relayout hota tha.)
+    val barsController = remember(ctx) {
+        ctx.findActivity()?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+    }
+    DisposableEffect(barsController) {
+        barsController?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        // Viewer kisi aur raaste se bhi hat sake (jaise list khali) to bars wapas aa jayen.
+        onDispose { barsController?.show(WindowInsetsCompat.Type.systemBars()) }
     }
     LaunchedEffect(slideshow, items.size) {
         while (slideshow && items.isNotEmpty()) {
@@ -162,10 +167,13 @@ fun Viewer(
     var rootSize by remember { mutableStateOf(IntSize.Zero) }
     LaunchedEffect(Unit) {
         if (enter.value < 1f) enter.animateTo(1f, tween(300, easing = FastOutSlowInEasing))
+        if (!closing) barsController?.hide(WindowInsetsCompat.Type.systemBars())
     }
     val requestClose: () -> Unit = {
         if (!closing) {
             closing = true
+            // Bars abhi laao: relayout viewer ke opaque rehte hue hota hai, close animation ke baad nahi.
+            barsController?.show(WindowInsetsCompat.Type.systemBars())
             scope.launch {
                 enter.animateTo(0f, tween(240, easing = FastOutSlowInEasing))
                 onClose()
@@ -239,7 +247,7 @@ fun Viewer(
             Row(
                 Modifier.fillMaxWidth()
                     .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent)))
-                    .statusBarsPadding().padding(horizontal = 4.dp, vertical = 4.dp),
+                    .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility).padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = requestClose) {
@@ -272,7 +280,7 @@ fun Viewer(
                 Modifier.fillMaxWidth()
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f))))
                     .padding(horizontal = 8.dp, vertical = 8.dp)
-                    .navigationBarsPadding(),
+                    .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -350,7 +358,7 @@ fun Viewer(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp)
                     .padding(bottom = 24.dp)
-                    .navigationBarsPadding(),
+                    .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility),
             ) {
                 Text(
                     stringResource(R.string.details_title),
