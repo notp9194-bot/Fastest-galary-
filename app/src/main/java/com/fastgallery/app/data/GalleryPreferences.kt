@@ -13,6 +13,12 @@ object GalleryPreferences {
     private const val PINNED_ALBUMS = "pinned_albums"
 
     private fun prefs(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+    /** Compose ke LaunchedEffect har launch par wahi value dobara save karte the: ab same ho to disk write skip. */
+    private fun putStringIfChanged(context: Context, key: String, value: String) {
+        val p = prefs(context)
+        if (p.getString(key, null) == value) return
+        p.edit().putString(key, value).apply()
+    }
     private fun readSet(context: Context, key: String): Set<String> = prefs(context).getStringSet(key, emptySet())?.toSet() ?: emptySet()
 
     fun favorites(context: Context) = readSet(context, FAVORITES)
@@ -57,11 +63,11 @@ object GalleryPreferences {
     fun sort(context: Context): GallerySort =
         runCatching { GallerySort.valueOf(prefs(context).getString("gallery_sort", null) ?: "") }
             .getOrDefault(GallerySort.DATE_NEWEST)
-    fun setSort(context: Context, value: GallerySort) { prefs(context).edit().putString("gallery_sort", value.name).apply() }
+    fun setSort(context: Context, value: GallerySort) = putStringIfChanged(context, "gallery_sort", value.name)
     fun filter(context: Context): MediaFilter =
         runCatching { MediaFilter.valueOf(prefs(context).getString("gallery_filter", null) ?: "") }
             .getOrDefault(MediaFilter.ALL)
-    fun setFilter(context: Context, value: MediaFilter) { prefs(context).edit().putString("gallery_filter", value.name).apply() }
+    fun setFilter(context: Context, value: MediaFilter) = putStringIfChanged(context, "gallery_filter", value.name)
 
     /** Slideshow me har photo kitni der dikhe (ms). */
     fun slideshowDelayMs(context: Context): Int = prefs(context).getInt("slideshow_delay_ms", DEFAULT_SLIDESHOW_MS).coerceIn(1000, 15000)

@@ -3,7 +3,6 @@ package com.fastgallery.app.ui
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -13,8 +12,10 @@ import androidx.compose.foundation.gestures.FlingBehavior
 import androidx.compose.foundation.gestures.ScrollScope
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -36,6 +37,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridItemInfo
+import androidx.compose.foundation.lazy.grid.LazyGridLayoutInfo
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -69,6 +72,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
@@ -103,6 +107,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.stringResource
@@ -190,6 +195,12 @@ private const val MAX_COLUMNS = 8
 private const val PREFETCH_ROWS = 2
 
 /**
+ * Grid cells par `Modifier.animateItem()` (trash/favorite/filter par smooth khisakna). A/B ke liye switch: false karke
+ * `ScrollBenchmarks` chalao aur frame time pehle/baad compare karo. Fayda na dikhe to true hi rehne do.
+ */
+private const val GRID_ITEM_ANIMATION = true
+
+/**
  * Pull-to-refresh: grid ke top pe neeche kheencho to MediaStore dobara load hota hai.
  * Indicator top bar ke neeche dikhta hai (topPadding), warna wo bar ke peeche chhup jaata.
  */
@@ -237,6 +248,30 @@ class GridOriginLookup {
 @Volatile
 internal var lastGridThumbPx: Int = 0
 
+/**
+ * Pinch ke dauran grid par `graphicsLayer` scale `scale` (pivot `origin`) lagta hai. Pointer position us layer ke bahar
+ * (scale se pehle ke space) me aati hai, jabki LazyGrid ke item offsets layer ke andar ke hain. Ye position ko wapas
+ * layer ke andar ke space me laata hai: `q = origin + (p - origin) / scale`. Scale 1 (ya be-matlab) = jaisa hai waisa.
+ */
+internal fun unscaleAround(p: Offset, origin: Offset, scale: Float): Offset =
+    if (scale == 1f || !scale.isFinite() || scale <= 0f) p else origin + (p - origin) / scale
+
+/**
+ * Grid ke andar ke touch point `pos` ke neeche ka media cell (header / cells ke beech ki gap = null).
+ * LazyGrid ke item offsets contentPadding (top bar ki height, left padding) ke bina hote hain; touch point grid ke
+ * andar ka hai, isliye padding hata ke content coordinates me lakar match karte hain.
+ * Drag-select aur tap dono yahi use karte hain.
+ */
+private fun LazyGridLayoutInfo.mediaCellAt(pos: Offset, originX: Float, entries: List<GridEntry>): LazyGridItemInfo? {
+    val px = pos.x - originX
+    val py = pos.y - beforeContentPadding
+    val hit = visibleItemsInfo.firstOrNull {
+        px >= it.offset.x && px < it.offset.x + it.size.width &&
+            py >= it.offset.y && py < it.offset.y + it.size.height
+    } ?: return null
+    return if (entries.getOrNull(hit.index) is GridEntry.Media) hit else null
+}
+
 @Composable
 fun MediaGrid(
     items: List<MediaItem>,
@@ -277,17 +312,32 @@ fun MediaGrid(
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val currentSelected by rememberUpdatedState(selected)
-    val toggleDay: (Any) -> Unit = { headerKey ->
-        val keys = dayGroups[headerKey].orEmpty()
-        if (keys.isNotEmpty()) {
-            val base = currentSelected
-            val all = keys.all { it in base }
-            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            onSetSelection(if (all) base - keys.toSet() else base + keys)
+    // Cells ko selected/favorite Boolean ke roop me nahi, ek stable holder (`GridMarks`) ke roop me milta hai; har cell apni
+    // membership khud derive karta hai. Isse selection badalne par (drag-select ke har step) MediaGrid ka item block aur
+    // saare visible cells dobara nahi chalte, sirf jinki value flip hui. Likhna composition me (rememberUpdatedState jaisa):
+    // cells layout me, MediaGrid ki composition apply hone ke baad compose hote hain.
+    val marks = remember { GridMarks() }
+    marks.selected = selected
+    marks.favorites = favoriteKeys
+    val currentOriginLookup by rememberUpdatedState(originLookup)
+    val currentOnOpen by rememberUpdatedState(onOpen)
+    val currentOnToggleSelection by rememberUpdatedState(onToggleSelection)
+    val currentDayGroups by rememberUpdatedState(dayGroups)
+    val setSelection by rememberUpdatedState(onSetSelection)
+    // remember: ek hi instance, taaki Thumb / header recompose-skip na tute (upar ke `State`s se hamesha taaza value padhta hai).
+    val toggleDay: (Any) -> Unit = remember {
+        { headerKey: Any ->
+            val keys = currentDayGroups[headerKey].orEmpty()
+            if (keys.isNotEmpty()) {
+                val base = currentSelected
+                val all = keys.all { it in base }
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                setSelection(if (all) base - keys.toSet() else base + keys)
+            }
         }
     }
+    val selectAction: (MediaItem) -> Unit = remember { { item: MediaItem -> currentOnToggleSelection(item) } }
     val currentEntries by rememberUpdatedState(entries)
-    val setSelection by rememberUpdatedState(onSetSelection)
     val currentColumns by rememberUpdatedState(columns)
     val changeColumns by rememberUpdatedState(onPinchColumns)
     val gridFlingBehavior = rememberGridFlingBehavior(flingFriction)
@@ -303,11 +353,10 @@ fun MediaGrid(
     // Viewer ki placeholder thumbnail isi size se mangti hai => grid ki memory-cache entry hit hoti hai.
     SideEffect { lastGridThumbPx = thumbPx }
     // Slow scroll / ruke grid me scroll ki disha me agli PREFETCH_ROWS rows ke thumbnails memory-cache me pehle se
-    // bhar do (API 29+: MediaStore ke system-cached thumbs, sasta). Fast scroll shuru hote hi (ya naya position aate hi)
+    // bhar do (API 29+: MediaStore ke system-cached thumbs; API 26-28: LegacyThumbFetcher, 3 parallel tak). Fast scroll shuru hote hi (ya naya position aate hi)
     // pichhle prefetch cancel; wahi cells ab dikhne lagte hain to unki apni request chalti hai.
     val prefetchCtx = LocalContext.current
     LaunchedEffect(gridState, thumbPx, gridColumns) {
-        if (Build.VERSION.SDK_INT < 29) return@LaunchedEffect
         val loader = prefetchCtx.imageLoader
         snapshotFlow {
             val visible = gridState.layoutInfo.visibleItemsInfo
@@ -347,43 +396,10 @@ fun MediaGrid(
     var settleJob by remember { mutableStateOf<Job?>(null) }
     // Trash/favorite/filter se items badalne par cells smoothly khisakte hain (animateItem).
     // Pinch ke dauran band: columns badalne par scale pehle se compensate hota hai, dobara animate karne se jhatka aata.
-    val animateItems by remember { derivedStateOf { pinchScale == 1f } }
-    // Sticky date header: LazyVerticalGrid me stickyHeader nahi hai, isliye content area ke top pe full-width overlay.
-    // Abhi ka (pinned) header hamesha top pe rehta hai; agla header upar aate hi use dheere se upar dhakel deta hai.
-    val headerIndices = model.headerIndices
-    // Pinned header = aakhri header jiska index pehle visible item se pehle (ya barabar) hai.
-    val stickyHeaderIndex by remember(headerIndices) {
-        derivedStateOf {
-            if (headerIndices.isEmpty()) -1
-            else {
-                val pos = java.util.Arrays.binarySearch(headerIndices, gridState.firstVisibleItemIndex)
-                val at = if (pos >= 0) pos else -pos - 2
-                if (at >= 0) headerIndices[at] else -1
-            }
-        }
-    }
-    val stickyLabel = (entries.getOrNull(stickyHeaderIndex) as? GridEntry.Header)?.label
-    var stickyHeightPx by remember { mutableIntStateOf(0) }
-    // Agla header pinned header ke itna paas aaye to pinned header utna upar khisakta hai (<= 0).
-    // Offsets ka origin (content padding) maane bina, pehle visible item se relative doori nikalte hain.
-    val stickyPush by remember(headerIndices) {
-        derivedStateOf {
-            val pinned = stickyHeaderIndex
-            val height = stickyHeightPx
-            if (pinned < 0 || height <= 0) 0
-            else {
-                val next = headerIndices.getOrNull(java.util.Arrays.binarySearch(headerIndices, pinned) + 1)
-                val info = gridState.layoutInfo.visibleItemsInfo
-                val nextInfo = if (next == null) null else info.firstOrNull { it.index == next }
-                val firstInfo = info.firstOrNull { it.index == gridState.firstVisibleItemIndex }
-                if (nextInfo == null || firstInfo == null) 0
-                else {
-                    val contentTop = firstInfo.offset.y + gridState.firstVisibleItemScrollOffset
-                    (nextInfo.offset.y - contentTop - height).coerceIn(-height, 0)
-                }
-            }
-        }
-    }
+    val animateItems by remember { derivedStateOf { GRID_ITEM_ANIMATION && pinchScale == 1f } }
+    // Sticky date header overlay alag composable (StickyDateHeader): pinned header badalne par poora MediaGrid recompose nahi hota.
+    // Yahan sirf uski height ka holder: viewer-open ke click me (composition ke bahar) padhi jati hai.
+    val stickyHeight = remember { mutableIntStateOf(0) }
     LaunchedEffect(gridState, items.size) {
         snapshotFlow {
             gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
@@ -395,6 +411,30 @@ fun MediaGrid(
     var gridWindowPos by remember { mutableStateOf(Offset.Zero) }
     val contentOriginXPx = with(density) { padding.calculateLeftPadding(androidx.compose.ui.platform.LocalLayoutDirection.current).toPx() }
     val currentOriginX by rememberUpdatedState(contentOriginXPx)
+    // Cell ka "activate": selection mode me toggle, warna viewer kholna (tapped thumbnail ke window rect ke saath).
+    // Touch tap (grid-level gesture) aur TalkBack double-tap (Thumb ka semantics onClick) dono yahi se guzarte hain.
+    val activate: (MediaItem, Int) -> Unit = remember(gridState) {
+        { item: MediaItem, index: Int ->
+            if (currentSelected.isNotEmpty()) currentOnToggleSelection(item)
+            else {
+                val li = gridState.layoutInfo
+                val info = li.visibleItemsInfo.firstOrNull { it.key == item.key }
+                val rect = info?.let {
+                    // Item offset contentPadding ke bina hai: window position me padding jodo.
+                    val left = gridWindowPos.x + currentOriginX + it.offset.x
+                    val top = gridWindowPos.y + li.beforeContentPadding + it.offset.y
+                    Rect(left, top, left + it.size.width, top + it.size.height)
+                }
+                currentOriginLookup?.let { l ->
+                    l.baseX = gridWindowPos.x + currentOriginX
+                    l.baseY = gridWindowPos.y + li.beforeContentPadding
+                    l.contentHeight = (li.viewportSize.height - li.beforeContentPadding - li.afterContentPadding).toFloat()
+                    l.topMargin = stickyHeight.intValue.toFloat()
+                }
+                currentOnOpen(index, rect)
+            }
+        }
+    }
     if (originLookup != null) {
         // entry.index (viewer ka index) -> grid entries ki position
         val entryPosByIndex = remember(entries) {
@@ -442,18 +482,8 @@ fun MediaGrid(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
 
-                        fun hitEntryIndex(pos: Offset): Int {
-                            // LazyGrid ke item offsets contentPadding (top bar ki height) ke bina hote hain;
-                            // touch point grid ke andar ka hai, isliye padding hata ke content coordinates me lao.
-                            val info = gridState.layoutInfo
-                            val px = pos.x - currentOriginX
-                            val py = pos.y - info.beforeContentPadding
-                            val hit = info.visibleItemsInfo.firstOrNull {
-                                px >= it.offset.x && px < it.offset.x + it.size.width &&
-                                    py >= it.offset.y && py < it.offset.y + it.size.height
-                            } ?: return -1
-                            return if (currentEntries.getOrNull(hit.index) is GridEntry.Media) hit.index else -1
-                        }
+                        fun hitEntryIndex(pos: Offset): Int =
+                            gridState.layoutInfo.mediaCellAt(pos, currentOriginX, currentEntries)?.index ?: -1
 
                         val anchorIndex = hitEntryIndex(down.position)
                         if (anchorIndex < 0) return@awaitEachGesture
@@ -518,6 +548,20 @@ fun MediaGrid(
                             autoScroll.cancel()
                         }
                     }
+                }
+                // Tap: har cell par alag `clickable` nahi; ek hi grid-level hit-test. Scroll (inner) drag consume kare to tap
+                // apne aap cancel; long-press / pinch Initial pass me consume karte hain, to unke baad tap nahi chalta.
+                // Header ka apna `clickable` hai (wo tap consume kar leta hai, yahan hit-test header par null deta hai).
+                .pointerInput(activate) {
+                    detectTapGestures(
+                        onTap = { pos ->
+                            // Pinch settle ke dauran grid par scale laga hota hai: touch ko layer ke andar ke space me lao.
+                            val p = unscaleAround(pos, pinchOrigin, pinchScale)
+                            val hit = gridState.layoutInfo.mediaCellAt(p, currentOriginX, currentEntries)
+                            val media = hit?.let { currentEntries.getOrNull(it.index) as? GridEntry.Media }
+                            if (media != null) activate(media.item, media.index)
+                        },
+                    )
                 }
                 .pointerInput(adaptiveColumns) {
                     awaitEachGesture {
@@ -611,77 +655,36 @@ fun MediaGrid(
             ) { entry ->
                 val itemModifier = if (animateItems) Modifier.animateItem() else Modifier
                 when (entry) {
-                    is GridEntry.Header -> {
-                        val keys = dayGroups[entry.key].orEmpty()
-                        DateHeaderText(
-                            entry.label,
-                            itemModifier,
-                            selectable = daySelectEnabled && keys.isNotEmpty(),
-                            selectionMode = selected.isNotEmpty(),
-                            allSelected = keys.isNotEmpty() && keys.all { it in selected },
-                            onToggle = { toggleDay(entry.key) },
-                        )
-                    }
-                    is GridEntry.Media -> Thumb(
-                        entry.item,
+                    is GridEntry.Header -> GridDayHeader(
+                        label = entry.label,
+                        keys = dayGroups[entry.key],
+                        marks = marks,
+                        daySelectEnabled = daySelectEnabled,
+                        onToggle = { toggleDay(entry.key) },
                         modifier = itemModifier,
+                    )
+                    is GridEntry.Media -> Thumb(
+                        item = entry.item,
+                        index = entry.index,
                         sizePx = thumbPx,
-                        selected = entry.item.key in selected,
-                        favorite = entry.item.key in favoriteKeys,
-                        onClick = {
-                            if (currentSelected.isNotEmpty()) onToggleSelection(entry.item)
-                            else {
-                                val info = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == entry.item.key }
-                                val rect = info?.let {
-                                    // Item offset contentPadding ke bina hai: window position me padding jodo.
-                                    val left = gridWindowPos.x + contentOriginXPx + it.offset.x
-                                    val top = gridWindowPos.y + gridState.layoutInfo.beforeContentPadding + it.offset.y
-                                    Rect(left, top, left + it.size.width, top + it.size.height)
-                                }
-                                originLookup?.let { l ->
-                                    val li = gridState.layoutInfo
-                                    l.baseX = gridWindowPos.x + contentOriginXPx
-                                    l.baseY = gridWindowPos.y + li.beforeContentPadding
-                                    l.contentHeight = (li.viewportSize.height - li.beforeContentPadding - li.afterContentPadding).toFloat()
-                                    l.topMargin = stickyHeightPx.toFloat()
-                                }
-                                onOpen(entry.index, rect)
-                            }
-                        },
-                        onLongClick = { onToggleSelection(entry.item) },
-                        longPressHandledByGrid = true,
+                        marks = marks,
+                        onActivate = activate,
+                        onSelectAction = selectAction,
+                        modifier = itemModifier,
                         deferLoad = deferThumbLoad,
                     )
                 }
             }
         }
-        if (stickyLabel != null) {
-            // Content area ke top pe clip: pushed-up header top bar / filter chip ke peeche nahi, apni hi patti me gayab hota hai.
-            val stickyHeight = with(LocalDensity.current) { stickyHeightPx.toDp() }
-            Box(
-                Modifier
-                    .align(Alignment.TopStart)
-                    .padding(top = padding.calculateTopPadding())
-                    .fillMaxWidth()
-                    .then(if (stickyHeightPx > 0) Modifier.height(stickyHeight) else Modifier)
-                    .clipToBounds(),
-            ) {
-                val stickyKey = (entries.getOrNull(stickyHeaderIndex) as? GridEntry.Header)?.key
-                val stickyKeys = stickyKey?.let { dayGroups[it] }.orEmpty()
-                DateHeaderText(
-                    stickyLabel,
-                    Modifier
-                        .fillMaxWidth()
-                        .onSizeChanged { if (it.height != stickyHeightPx) stickyHeightPx = it.height }
-                        .graphicsLayer { translationY = stickyPush.toFloat() }
-                        .background(MaterialTheme.colorScheme.background),
-                    selectable = daySelectEnabled && stickyKeys.isNotEmpty(),
-                    selectionMode = selected.isNotEmpty(),
-                    allSelected = stickyKeys.isNotEmpty() && stickyKeys.all { it in selected },
-                    onToggle = { stickyKey?.let(toggleDay) },
-                )
-            }
-        }
+        StickyDateHeader(
+            gridState = gridState,
+            model = model,
+            topPadding = padding.calculateTopPadding(),
+            heightPx = stickyHeight,
+            marks = marks,
+            daySelectEnabled = daySelectEnabled,
+            onToggle = toggleDay,
+        )
         if (items.size > 50) {
             FastScroller(
                 gridState = gridState,
@@ -694,6 +697,114 @@ fun MediaGrid(
     }
 }
 
+
+/**
+ * Sticky date header overlay: content area ke top pe full-width. Pinned header hamesha top pe; agla header upar aate hi
+ * use dheere upar dhakel deta hai (LazyVerticalGrid me stickyHeader nahi hai).
+ *
+ * Alag composable isliye: pinned header (`pinnedIndex`) har din ki boundary par badalta hai. Ye State MediaGrid ki body me
+ * padha jata to scroll me har boundary par poora MediaGrid recompose hota; ab sirf ye overlay hota hai.
+ * `pushPx` sirf graphicsLayer (draw phase) me padha jata hai, to har frame par recompose nahi.
+ */
+@Composable
+private fun BoxScope.StickyDateHeader(
+    gridState: LazyGridState,
+    model: GridModel,
+    topPadding: Dp,
+    heightPx: MutableIntState,
+    marks: GridMarks,
+    daySelectEnabled: Boolean,
+    onToggle: (Any) -> Unit,
+) {
+    val headerIndices = model.headerIndices
+    // Pinned header = aakhri header jiska index pehle visible item se pehle (ya barabar) hai.
+    val pinnedIndex by remember(headerIndices) {
+        derivedStateOf {
+            if (headerIndices.isEmpty()) -1
+            else {
+                val pos = java.util.Arrays.binarySearch(headerIndices, gridState.firstVisibleItemIndex)
+                val at = if (pos >= 0) pos else -pos - 2
+                if (at >= 0) headerIndices[at] else -1
+            }
+        }
+    }
+    // Agla header pinned header ke itna paas aaye to pinned header utna upar khisakta hai (<= 0).
+    // Offsets ka origin (content padding) maane bina, pehle visible item se relative doori nikalte hain.
+    val pushPx by remember(headerIndices) {
+        derivedStateOf {
+            val pinned = pinnedIndex
+            val height = heightPx.intValue
+            if (pinned < 0 || height <= 0) 0
+            else {
+                val next = headerIndices.getOrNull(java.util.Arrays.binarySearch(headerIndices, pinned) + 1)
+                val info = gridState.layoutInfo.visibleItemsInfo
+                val nextInfo = if (next == null) null else info.firstOrNull { it.index == next }
+                val firstInfo = info.firstOrNull { it.index == gridState.firstVisibleItemIndex }
+                if (nextInfo == null || firstInfo == null) 0
+                else {
+                    val contentTop = firstInfo.offset.y + gridState.firstVisibleItemScrollOffset
+                    (nextInfo.offset.y - contentTop - height).coerceIn(-height, 0)
+                }
+            }
+        }
+    }
+    val header = model.entries.getOrNull(pinnedIndex) as? GridEntry.Header ?: return
+    val keys = model.dayGroups[header.key].orEmpty()
+    // Content area ke top pe clip: pushed-up header top bar / filter chip ke peeche nahi, apni hi patti me gayab hota hai.
+    val heightDp = with(LocalDensity.current) { heightPx.intValue.toDp() }
+    Box(
+        Modifier
+            .align(Alignment.TopStart)
+            .padding(top = topPadding)
+            .fillMaxWidth()
+            .then(if (heightPx.intValue > 0) Modifier.height(heightDp) else Modifier)
+            .clipToBounds(),
+    ) {
+        GridDayHeader(
+            label = header.label,
+            keys = keys,
+            marks = marks,
+            daySelectEnabled = daySelectEnabled,
+            onToggle = { onToggle(header.key) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .onSizeChanged { if (it.height != heightPx.intValue) heightPx.intValue = it.height }
+                .graphicsLayer { translationY = pushPx.toFloat() }
+                .background(MaterialTheme.colorScheme.background),
+        )
+    }
+}
+
+/**
+ * Date header + uski selection state. `selectionMode` / `allSelected` yahin `marks` se derive hote hain (composition me
+ * MediaGrid nahi padhta), to selection badalne par sirf wahi header recompose hota hai jiski value flip hui.
+ * Grid ka header aur sticky overlay dono yehi use karte hain.
+ */
+@Composable
+private fun GridDayHeader(
+    label: String,
+    keys: List<String>?,
+    marks: GridMarks,
+    daySelectEnabled: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val selectionMode by remember(marks) { derivedStateOf { marks.selected.isNotEmpty() } }
+    val allSelected by remember(marks, keys) {
+        derivedStateOf {
+            val sel = marks.selected
+            !keys.isNullOrEmpty() && keys.all { it in sel }
+        }
+    }
+    DateHeaderText(
+        label,
+        modifier,
+        selectable = daySelectEnabled && !keys.isNullOrEmpty(),
+        selectionMode = selectionMode,
+        allSelected = allSelected,
+        onToggle = onToggle,
+    )
+}
 
 /**
  * Grid ka date header; sticky overlay bhi yehi use karta hai taaki dono ki height/style bilkul barabar rahe.

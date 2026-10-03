@@ -326,7 +326,7 @@ object MediaOperations {
         }
     }
 
-    private fun readExifTransform(context: Context, uri: Uri): Pair<Int, Boolean> =
+    internal fun readExifTransform(context: Context, uri: Uri): Pair<Int, Boolean> =
         try {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 val exif = ExifInterface(input)

@@ -2,6 +2,7 @@ package com.fastgallery.app
 
 import android.app.Application
 import android.app.ActivityManager
+import android.os.Build
 import coil.Coil
 import coil.ImageLoader
 import coil.ImageLoaderFactory
@@ -9,6 +10,9 @@ import coil.decode.VideoFrameDecoder
 import coil.decode.GifDecoder
 import coil.memory.MemoryCache
 import com.fastgallery.app.data.GalleryPreferences
+import com.fastgallery.app.data.StartupPreload
+import com.fastgallery.app.ui.LegacyThumbCache
+import com.fastgallery.app.ui.LegacyThumbFetcher
 import com.fastgallery.app.ui.ThumbData
 import com.fastgallery.app.ui.ThumbFetcher
 import com.fastgallery.app.ui.ThumbKeyer
@@ -24,7 +28,9 @@ import com.fastgallery.app.ui.ThumbKeyer
 class GalleryApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
-        // Cold start: prefs file aur ImageLoader background me warm karo, main thread block na ho.
+        // Cold start: pehle page ki cache + prefs sabse pehle, alag thread par (Coil init ke peeche na rukein).
+        if (hasMediaAccess(this)) StartupPreload.start(this)
+        // Prefs file aur ImageLoader background me warm karo, main thread block na ho.
         Thread {
             GalleryPreferences.theme(this)
             Coil.imageLoader(this)
@@ -41,7 +47,9 @@ class GalleryApp : Application(), ImageLoaderFactory {
         return ImageLoader.Builder(this)
             .components {
                 add(ThumbKeyer(), ThumbData::class.java)
-                add(ThumbFetcher.Factory(), ThumbData::class.java)
+                // API 29+: MediaStore.loadThumbnail. API 26-28: sampled decode + apna thumbnail disk cache.
+                if (Build.VERSION.SDK_INT >= 29) add(ThumbFetcher.Factory(), ThumbData::class.java)
+                else add(LegacyThumbFetcher.Factory(LegacyThumbCache.get(this@GalleryApp)), ThumbData::class.java)
                 add(VideoFrameDecoder.Factory())
                 add(GifDecoder.Factory())
             }

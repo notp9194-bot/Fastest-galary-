@@ -23,6 +23,7 @@
     <string name="action_select_all">Select all</string>
     <string name="action_deselect_all">Deselect all</string>
     <string name="action_favorite_short">Favorite</string>
+    <string name="action_copy_move_short">Copy/Move</string>
     <string name="action_unfavorite_short">Unfavorite</string>
     <string name="action_trash_short">Trash</string>
     <string name="action_restore_short">Restore</string>
@@ -188,6 +189,8 @@
     <string name="bulk_deleting">Deleting %1$d of %2$d</string>
     <string name="bulk_copying">Copying…</string>
     <string name="bulk_moving">Moving…</string>
+    <string name="bulk_copying_n">Copying %1$d of %2$d</string>
+    <string name="bulk_moving_n">Moving %1$d of %2$d</string>
     <string name="msg_delete_partial">Deleted %1$d of %2$d</string>
     <string name="msg_copy_cancelled">Copy cancelled</string>
     <string name="copy_new_album">New album</string>
@@ -279,6 +282,8 @@
     <string name="msg_album_auth_failed">Couldn\'t verify it\'s you. The album stays locked.</string>
     <string name="msg_copied">Copied to %1$s</string>
     <string name="msg_copy_failed">Couldn\'t copy. %1$s</string>
+    <string name="msg_copied_n">Copied %1$d items to %2$s</string>
+    <string name="msg_copy_partial">Copied %1$d of %2$d. Originals were kept.</string>
     <string name="msg_wallpaper_set">Wallpaper set</string>
     <string name="msg_wallpaper_failed">Couldn\'t set wallpaper. %1$s</string>
     <string name="msg_edit_saved">Edited copy saved</string>

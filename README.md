@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.40
+# Fast Gallery 1.4.46
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -7,7 +7,7 @@ Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26
 - Photos and videos with albums, date headers, animated GIF decoding, and device-provided RAW previews.
 - In-app video playback, photo zoom, swipe up/down to close the viewer, slideshow, photo details and available EXIF metadata.
 - Search, media-type filters (photos, videos, GIF and RAW), sort by date/name/size, live pinch-to-zoom grid columns, and a draggable fast scroller with date bubble.
-- Long-press multi-select with drag-to-select (ungli ghumake ek saath kai items) and bulk share, favorites and trash actions.
+- Long-press multi-select with drag-to-select (ungli ghumake ek saath kai items) and bulk share, favorites, copy/move and trash actions.
 - Rename, copy to another album/folder, or move (copy followed by Android's delete approval).
 - Trash with restore (30-day auto-delete), favorite collection, album hide, and device-authenticated album lock.
 - Full-screen edit screen with live preview: rotate 90°, flip horizontal/vertical, straighten (±45°), drag-to-crop (free, 1:1, 4:3, 3:4, 16:9 with movable corners/edges), brightness/contrast/saturation sliders, 12 filters (Original, Mono, Warm, Cool, Vivid, Dramatic, Fade, Vintage, Sepia, Noir, Sunset, Forest), undo/reset and hold-to-compare (before/after). Edits are saved as a new JPEG; the source is preserved.
@@ -51,6 +51,81 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
 - `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
 
+## Updates in 1.4.46
+
+- **Splash screen hata di**: `installSplashScreen()` aur `setKeepOnScreenCondition` (700 ms tak ka wait) `MainActivity` se hate, `androidx.core:core-splashscreen` dependency aur `Theme.Gallery.Starting` hata diye, `MainActivity` ab seedha `Theme.Gallery` use karta hai. Pehla frame ab kisi condition ka intezaar nahi karta: cache hit pe grid seedha, miss pe skeleton.
+  - Android 12+ par OS har cold start pe system splash dikhata hi hai (band nahi hota). Isliye `values-v31` / `values-night-v31` me `Theme.Gallery` ka splash background = window bg (`@color/bg`), icon = transparent (`drawable/splash_empty.xml`), animation 0 ms. Dikhta sirf khali bg hai jo seedha app frame me badal jaata hai.
+  - Android 8-11 par windowBackground (`@color/bg`) hi preview hai: pehle jaisa, bas ab purple splash nahi.
+- **Cold start ka kaam pehle shuru** (`data/StartupPreload.kt`): pehle page ki disk cache + prefs sets (favorites/trash/hidden/locked) ab `GalleryApp.onCreate` se alag thread par padhe jaate hain (media permission ho tab), Activity/ViewModel banne ka intezaar kiye bina. `GalleryViewModel` `StartupPreload.consume()` se wahi result leta hai (one-shot, sirf process ki pehli ViewModel ko). `FirstPageCache.shared(context)`: preload aur ViewModel ek hi cache instance share karte hain.
+- **First paint se blocking kaam hata**: (1) `purgeExpiredFallbackTrash()` (API < 30) ab pehla page publish hone ke BAAD chalta hai (pehle query se pehle chalta tha). (2) `setSort` / `setFilter` ab same value ho to disk write nahi karte (pehle har launch par `LaunchedEffect` do prefs write karwata tha).
+- Tests: `StartupPreloadTest` (cache miss, saved items, one-shot consume, shared singleton).
+- Version: `versionName` 1.4.46 / `versionCode` 52.
+
+**200 ms ka guarantee yahan naapa nahi gaya** (Gradle/SDK/device nahi tha, build/tests nahi chale). Asli cold-start time device, process-start aur ART compile par depend karta hai. Sabse bada lever abhi baaki hai: `baseline-prof.txt` hand-curated hai, measured nahi. Device par `./gradlew :app:generateBaselineProfile` chalake `app/src/main/generated/baselineProfiles/` commit karo, phir `baseline-prof.txt` delete karo. Naapne ke liye `StartupBenchmarks` (`timeToInitialDisplay`), 1-2 warm-up run ke baad (pehli iteration me cache miss hoti hai).
+
+## Updates in 1.4.45
+
+- **Grid-level tap + cell ka selected/favorite derived (P3 #5)**: pehle har `Thumb` par alag `clickable` (pointer node + interaction state + ripple) tha, aur `selected` / `favorite` Boolean param the. Selection ke har badlav (drag-select ke har step) par `MediaGrid` ka item block dobara chalta tha, har cell ko naye lambdas milte the aur saare visible cells recompose hote the. Ab:
+  - **Tap**: ek hi `detectTapGestures` grid par (`ui/Screens.kt`). Touch point ko `mediaCellAt` (wahi hit-test jo drag-select use karta hai, ab shared) se cell se match karta hai, phir `activate` (selection mode me toggle, warna viewer open + window rect). Scroll (inner) drag consume kare to tap cancel; long-press (drag-select) aur pinch Initial pass me consume karte hain, to unke baad tap nahi chalta. Header ka apna `clickable` pehle jaisa. Pinch settle ke dauran grid par `graphicsLayer` scale hota hai, isliye tap point `unscaleAround` se layer ke andar ke space me aata hai.
+  - **`GridMarks`** (`ui/Components.kt`, `@Stable`): `selected` / `favorites` ke Set ek stable holder me; `MediaGrid` ise composition me update karta hai (`rememberUpdatedState` jaisa, `referentialEqualityPolicy` => O(n) `equals` nahi). Har cell `derivedStateOf { key in marks.selected }` se sirf apni membership padhta hai: badge/overlay alag composables (`FavoriteBadge`, `SelectedOverlay`) me aur TalkBack semantics block me padhi jati hai. Flip par sirf wahi hissa recompose hota hai.
+  - `Thumb` ke params badle: `onClick` / `onLongClick` / `longPressHandledByGrid` / `selected` / `favorite` hate; `index`, `marks`, `onActivate`, `onSelectAction` aaye. Dono lambda poore grid ke liye ek hi `remember`ed instance hain, isliye selection badalne par `Thumb` skip hota hai.
+  - Date header bhi: `GridDayHeader` apna `selectionMode` / `allSelected` `marks` se derive karta hai (grid ka header aur sticky overlay dono). `toggleDay` ab `remember`ed hai.
+  - **TalkBack**: har cell ke merged semantics me ab `onClick` (activate) aur `onLongClick` ("Select") dono hain, aur `stateDescription` (Selected / Favorite) pehle jaisa. Touch events ke bina bhi double-tap chalta hai.
+- Fark jo dikhega / dhyan rakhna:
+  - Cell par **ripple (press feedback) nahi** rahi: ripple per-cell `clickable` ka hissa tha. Tap ka natija (viewer open / selection overlay) turant dikhta hai. Chahiye ho to grid-level `pressedKey` se halka overlay joda ja sakta hai.
+  - Cell ab **keyboard / D-pad focus** nahi leta (`clickable` focusable banata tha). TalkBack / Switch Access semantics action se chalte hain.
+  - `animateItem()` ke beech (trash/filter par ~400 ms) tap final layout position se match hota hai, drawn position se nahi.
+- Tests: `GridTapTest` (`unscaleAround`: identity, graphicsLayer scale ka ulta, origin fixed, bad scale). Hit-test / gesture JVM test me nahi: device chahiye.
+- Version: `versionName` 1.4.45 / `versionCode` 51.
+
+Build/tests yahan nahi chale (Gradle/SDK nahi tha). Pehli CI build dekhna. Device par: (1) tap se viewer khule + back par thumbnail transition sahi cell se ho, (2) selection mode me tap toggle kare, long-press + drag-select pehle jaisa, (3) pinch ke turant baad tap, (4) TalkBack on karke double-tap aur long-press "Select" action. Naapo: Layout Inspector ki recomposition counts me drag-select ke dauran `Thumb` (pehle saare visible cells, ab sirf flip hue), `gradle assembleRelease -PcomposeReports` me `Thumb` skippable, aur `ScrollBenchmarks` (`FrameTimingMetric`) pehle/baad.
+
+## Updates in 1.4.44
+
+- **API 26-28 ke liye thumbnail disk cache (P3 #6)**: API 29+ par `loadThumbnail` (MediaProvider ka apna cache) chalta hai, par API 26-28 par Coil original file (aur video ka frame) har baar dobara decode karta tha (Coil ka disk cache sirf network fetcher ke liye hai). Naya `ui/LegacyThumbFetcher.kt`:
+  - Pehle apna disk cache (`cache/thumbs_v2`, 192 MB, low-RAM par 96 MB; Coil `DiskCache` API, ImageLoader se alag, to `loader.diskCache == null` wala test jaisa hi) dekhta hai. Miss par ek baar decode, phir chhota WebP (alpha wali) / JPEG q85 likh deta hai.
+  - Image: bounds -> `inSampleSize` (chhoti side >= size rahe) -> exact scale (chhoti side == size, upscale nahi, aspect wahi, lambi side <= 3x size) -> EXIF rotation/flip (`MediaOperations.readExifTransform`, ab `internal`). Video: `MediaMetadataRetriever` pehla frame. GIF ab grid me static (API 29+ jaisa; pehle API < 29 par grid me animate hota tha).
+  - Bhaari decode `MAX_PARALLEL_LEGACY_THUMB_LOADS = 3` tak ek saath (purane phones par bade originals ka OOM/jank na ho). Cancel hone par adhura thumbnail disk par nahi likhta.
+- `thumbImageRequest` ab har API par `ThumbData` deta hai (pehle API < 29 par seedha uri), to `ThumbKeyer` ki memory-cache key har API par hai. Is wajah se API 26-28 par bhi: `isThumbCached` (fast-scroll me cached cell turant dikhe), slow-scroll prefetch (`PREFETCH_ROWS`), aur Viewer ka `cachedAspect` (open/close transition ka crop correction) ab chalte hain.
+- Limit: cache key = uri + size. Kisi doosre app ne wahi file badal di (naya MediaStore id nahi) to purana thumbnail LRU hatane tak dikh sakta hai.
+- Tests: `LegacyThumbTest` (sample size, target size, no-upscale, panorama cap). Fetcher khud (disk + decode) JVM test me nahi: API 26-28 device/emulator chahiye.
+- Version: `versionName` 1.4.44 / `versionCode` 50.
+
+Build/tests yahan nahi chale. API 26-28 emulator/phone par dekho: pehli baar scroll me thumbnails dheere bharte hain (decode + cache likhna), dusri baar (app band karke, ya memory cache evict hone ke baad) turant; `adb shell run-as com.fastgallery.app du -sh cache/thumbs_v2` badhta dikhna chahiye. Video thumbnails aur rotate-ki-hui (EXIF) photos zaroor check karo. API 29+ ka raasta bilkul nahi badla.
+
+## Updates in 1.4.43
+
+- **Compose stability config (P3 #4)**: `stability_config.conf` (root) + `composeCompiler { stabilityConfigurationFile }` (`app/build.gradle.kts`). `MediaItem` me `android.net.Uri` hai (Compose use unstable maanta hai), isliye `MediaItem`, `Album`, `GridEntry` unstable the. Refresh par saare MediaItem naye objects banate hain, aur unstable param `===` se compare hota hai, to har refresh par saare visible `Thumb` (aur unke onClick lambda) recompose hote the. Ab `Uri`, `MediaItem`, `Album`, `GridEntry` stable declared hain => `equals` se compare: same media ka naya object skip hota hai.
+  - Collections (List/Set/Map) jaan-boojh ke stable nahi kiye: `selected: Set<String>` par `equals` O(n) hota, badi selection par har recompose me mehnga.
+  - Shart: ye classes immutable rahein (val fields). Mutable field jodo to config se hatao.
+  - Verify: `gradle assembleRelease -PcomposeReports`, phir `app/build/compose_reports/` me `*-classes.txt` me `MediaItem` "stable" aur `*-composables.txt` me `Thumb` "skippable" dikhna chahiye. Kotlin 2.2+ par `stabilityConfigurationFile` deprecated warning deta hai, tab `stabilityConfigurationFiles.add(...)`.
+- Version: `versionName` 1.4.43 / `versionCode` 49.
+
+Build yahan nahi chali. Asli fayda (kam recompose) naapna ho to refresh (favorite toggle / pull-to-refresh) ke dauran Layout Inspector ki recomposition counts me `Thumb` dekho, ya `ScrollBenchmarks`.
+
+## Updates in 1.4.42
+
+- **Sticky date header alag composable (grid recompose kam)**: pehle `MediaGrid` ki body pinned-header index (State) padhti thi, to scroll me har din ki boundary par poora `MediaGrid` recompose hota tha. Ab overlay `StickyDateHeader` (`ui/Screens.kt`) me hai, ye State wahin padhta hai: boundary par sirf overlay recompose hota hai. Push offset pehle jaisa sirf `graphicsLayer` (draw phase) me padha jata hai. Behavior wahi (pinned header, agla aate hi upar dhakelna, tap se din select/deselect). `MediaGrid` me ab sirf height ka holder (`stickyHeight`) hai, jo viewer-open click me padha jata hai.
+- **`animateItem()` ka A/B switch**: `GRID_ITEM_ANIMATION` (`ui/Screens.kt`, abhi `true` = pehle jaisa). Bina naape code se hataya nahi: modifier badlav se *pehle* lagna zaroori hai (warna animation ke liye purani position hi nahi milti), aur scroll/fling par composition me toggle karne se saare visible cells recompose hote jo 1.4.40 me hatae the. `false` karke `ScrollBenchmarks` (`FrameTimingMetric`) chalao; frame time me fayda dikhe tabhi permanent karo (tab Trash/favorite/filter par items jhatke se khisakenge).
+- **Baseline Profile**: is update me bhi generate NAHI hua (device/emulator chahiye). Device par: `./gradlew :app:generateBaselineProfile`, phir `app/src/main/generated/baselineProfiles/` commit karke `baseline-prof.txt` delete.
+- Version: `versionName` 1.4.42 / `versionCode` 48.
+
+Build/tests yahan nahi chale (Gradle/SDK nahi tha). Haath se dekho: scroll me sticky header pehle jaisa chipke, din badalte waqt agla header usse upar dhakele, selection mode me header par circle aur tap se din select ho.
+
+## Updates in 1.4.41
+
+- **Multi-select me Copy/Move**: long-press se select karne ke baad neeche action bar me ab **Copy/Move** hai (Share, Favorite, Copy/Move, Trash, Delete). Trash tab me ye nahi dikhta (pehle Restore karo); picker mode me bhi nahi.
+  - Icon naya nahi bana: nav bar wala `ic_albums` (folder) hi reuse kiya (`ImageVector.vectorResource`). Bar me 5 actions aane se har action ka horizontal padding 14dp -> 10dp.
+  - Tap par wahi `AlbumPickerSheet` khulta hai jo viewer me tha (existing album / New album + "Delete original" switch). Ab kai items ke liye overload hai: move me album tabhi disabled jab saare selected items usi album me hon.
+  - Naya `copyOrMoveMedia` (`MainActivity.kt`): viewer aur multi-select dono yahi use karte hain. Ek item par pehle jaisa progress; kai items par "Copying 3 of 12" + overall bar + Cancel.
+  - Move: sab copy safal hone ke baad hi originals ka delete (API 30+ par system approval ek baar, saare items ke liye). Move me jo item pehle se destination folder me hai wo skip (`itemsToTransfer`, `data/Models.kt`).
+  - Pehli failure ya Cancel par ruk jaata hai: jo copy ho chuke wo rehte hain, originals koi delete nahi hota, aur "Copied X of Y. Originals were kept." dikhta hai.
+  - Naye strings (en + hi): `action_copy_move_short`, `bulk_copying_n`, `bulk_moving_n`, `msg_copied_n`, `msg_copy_partial`.
+- Tests: `ModelsTest.itemsToTransfer_...`.
+- Version: `versionName` 1.4.41 / `versionCode` 47.
+
+Build/tests yahan nahi chale (Gradle/SDK nahi tha). Pehli CI build dekhna; device par 2-3 photos select karke Copy aur Move dono try karna, aur Move me approval dialog ek hi baar aana chahiye.
+
 ## Updates in 1.4.40
 
 - **Compose BOM upgrade (P3 #3)**: `2024.09.03` -> `2026.06.01` (Compose 1.11.x, material3 1.4.0). Latest BOM `2026.09.00` (Compose 1.12) jaan-boojh ke nahi liya: Compose 1.12 ke liye compileSdk 37 + AGP 9 chahiye (abhi AGP 8.11.1 / compileSdk 36). Saath me `material-icons-core` seedha dependency me (BOM se version), taaki `Icons.Default.*` material3 ki transitive dependency par na tike.
@@ -68,7 +143,6 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - **Grid recompose kam (P3)**: (1) `Thumb(deferLoad)` ab `() -> Boolean` hai; fast-scroll State composition me nahi padha jata, pehle har fling shuru/band par saare visible cells recompose hote the. Ab sirf abhi tak grey cell `snapshotFlow` se intezaar karta hai. Behavior wahi: ek baar load hua cell wapas grey nahi hota. (2) Cell ke `onClick` me `selected` Set ki jagah `currentSelected` (`rememberUpdatedState`): pehle har selection badlav (drag-select ke har step) par saare visible cells ki lambda badalti thi aur wo recompose hote the.
 - **`formatDuration` sasta (P3)**: `String.format` (har call par Formatter allocate) hata ke `StringBuilder`; video cell me `remember(item.durationMs)` taaki recompose par dobara na bane. Output wahi (`m:ss`, `h:mm:ss`), test `FormatDurationTest`. Farak: ab hamesha ASCII digits (pehle `String.format` locale ke digits deta tha).
 - **Badge allocations (P3)**: video/GIF/RAW badge ka `RoundedCornerShape(6.dp)` aur scrim color top-level constants (`BadgeShape`, `BadgeScrim`): pehle har badge-wale cell ke har recompose par naya shape banta tha. `stringResource(typeBadge)` aur `semantics {}` lambda jaan-boojh ke nahi chheda (resource lookup sasta hai, semantics lambda cell-specific hai).
-- **`MediaItem.key` stored (P3)**: getter `uri.toString()` ki jagah ek baar bana `val`. Grid key lambda, `selected`/`favoriteKeys` lookups aur viewer isse bahut baar padhte hain. Equality/hashCode par asar nahi (body property).
 - Version: `versionName` 1.4.40 / `versionCode` 46.
 
 Build/tests yahan nahi chale (network aur device nahi tha). Release/profileable build par Macrobenchmark se hi asli numbers milenge.

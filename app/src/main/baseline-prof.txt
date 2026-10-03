@@ -8,7 +8,7 @@
 #
 # Flags: H = hot, S = startup, P = post-startup.
 
-# --- Startup path: process start -> splash -> permission/first grid frame ---
+# --- Startup path: process start -> permission/first grid frame (splash nahi) ---
 HSPLcom/fastgallery/app/GalleryApp;->**(**)**
 HSPLcom/fastgallery/app/MainActivity**;->**(**)**
 HSPLcom/fastgallery/app/GalleryViewModel**;->**(**)**

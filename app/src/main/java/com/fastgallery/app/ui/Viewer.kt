@@ -5,7 +5,6 @@ package com.fastgallery.app.ui
 import androidx.compose.animation.AnimatedVisibility
 import android.app.ActivityManager
 import android.content.Context
-import android.os.Build
 import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -481,10 +480,9 @@ fun Viewer(
 /**
  * Memory cache me pade thumbnail (grid / viewer placeholder) se photo ka dikhne wala aspect ratio (w/h).
  * Thumbnail me EXIF rotation pehle se lagi hoti hai, isliye MediaStore ke width/height se behtar hai.
- * Na mile (ya API < 29) to 0 = pata nahi; tab transition me crop-to-fit correction nahi lagta.
+ * Na mile to 0 = pata nahi; tab transition me crop-to-fit correction nahi lagta.
  */
 internal fun cachedAspect(ctx: Context, uri: Uri): Float {
-    if (Build.VERSION.SDK_INT < 29) return 0f
     val cache = ctx.imageLoader.memoryCache ?: return 0f
     for (size in intArrayOf(lastGridThumbPx, 512)) {
         if (size <= 0) continue

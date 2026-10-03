@@ -242,4 +242,19 @@ class ModelsTest {
         assertFalse(photo.matchesFilter(MediaFilter.RAW))
         assertFalse(testItem(8, name = "noextension", mime = "image/jpeg").matchesFilter(MediaFilter.RAW))
     }
+
+    @Test
+    fun itemsToTransfer_copyKeepsAll_moveSkipsItemsAlreadyInDestination() {
+        val inCamera = testItem(1).copy(relativePath = "DCIM/Camera/")
+        val inPictures = testItem(2).copy(relativePath = "Pictures/Trip/")
+        val items = listOf(inCamera, inPictures)
+
+        assertEquals(items, itemsToTransfer(items, move = false, destRelativePath = "DCIM/Camera/"))
+        assertEquals(listOf(inPictures), itemsToTransfer(items, move = true, destRelativePath = "DCIM/Camera/"))
+        // Slash ka farak matter nahi karta.
+        assertEquals(listOf(inPictures), itemsToTransfer(items, move = true, destRelativePath = "/DCIM/Camera"))
+        // Naya album (path null): koi item pehle se wahan nahi.
+        assertEquals(items, itemsToTransfer(items, move = true, destRelativePath = null))
+        assertTrue(itemsToTransfer(listOf(inCamera), move = true, destRelativePath = "DCIM/Camera/").isEmpty())
+    }
 }

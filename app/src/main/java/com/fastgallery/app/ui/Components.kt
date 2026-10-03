@@ -4,10 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -16,6 +13,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -36,6 +34,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -56,6 +58,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -176,11 +179,11 @@ fun rememberViewerRequest(uri: Uri, size: Int): ImageRequest {
 
 /**
  * Grid/album thumbs ki request: API 29+ pe MediaStore ke system-cached thumbnails (full decode se bahut fast),
- * purane Android pe sampled Coil decode. Display (AsyncImage) aur prefetch dono yahi use karte hain, taaki
- * memory-cache key same rahe.
+ * API 26-28 pe `LegacyThumbFetcher` (sampled decode + apna disk cache). Dono `ThumbData` se chalte hain, to memory-cache
+ * key (`ThumbKeyer`) har API par same banti hai. Display (AsyncImage) aur prefetch dono yahi use karte hain.
  */
 fun thumbImageRequest(ctx: Context, uri: Uri, size: Int, fadeIn: Boolean = false): ImageRequest {
-    val data: Any = if (Build.VERSION.SDK_INT >= 29) ThumbData(uri, size) else uri
+    val data: Any = ThumbData(uri, size)
     return ImageRequest.Builder(ctx)
         .data(data)
         .size(size)
@@ -195,9 +198,9 @@ fun rememberThumbRequest(uri: Uri, size: Int, fadeIn: Boolean = false): ImageReq
     return remember(uri, size, fadeIn) { thumbImageRequest(ctx, uri, size, fadeIn) }
 }
 
-/** Thumbnail memory-cache me pehle se hai? (API 29+ ka ThumbKeyer key; purane Android par pata nahi => false.) */
+/** Thumbnail memory-cache me pehle se hai? (`ThumbKeyer` ki key, har API par.) */
 internal fun isThumbCached(ctx: Context, uri: Uri, size: Int): Boolean =
-    Build.VERSION.SDK_INT >= 29 && ctx.imageLoader.memoryCache?.get(MemoryCache.Key("thumb:$uri:$size")) != null
+    ctx.imageLoader.memoryCache?.get(MemoryCache.Key("thumb:$uri:$size")) != null
 
 /** Video/GIF/RAW badge ka shape aur scrim: har cell ke har recompose par naya `RoundedCornerShape` na bane. */
 private val BadgeShape = RoundedCornerShape(6.dp)
@@ -206,18 +209,46 @@ private val BadgeScrim = Color.Black.copy(alpha = 0.55f)
 /** Thumb ka default `deferLoad`: kabhi defer nahi. Ek hi instance, taaki default lambda par recompose-skip na tute. */
 private val NEVER_DEFER: () -> Boolean = { false }
 
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+/** Selected cell ka halka andhera (har draw par naya `Color` na bane). */
+private val SelectedScrim = Color.Black.copy(alpha = 0.28f)
+
+/**
+ * Grid ke saare cells ka selection / favorite ka ek shared "view".
+ *
+ * Pehle `selected` / `favorite` har cell ko Boolean ki tarah milte the, to selection badalte hi (drag-select ke har step)
+ * MediaGrid ka item block dobara chalta, har cell ko naye lambdas milte aur saare visible cells recompose hote.
+ * Ab cells ko ye ek stable holder milta hai (jo kabhi badalta nahi); har cell `derivedStateOf` se sirf apni membership
+ * padhta hai, to sirf wahi cells recompose hote jinki value sach me flip hui.
+ *
+ * `referentialEqualityPolicy`: naya Set instance aate hi readers dobara jaanch lete hain, badi selection par O(n) `equals` nahi.
+ * Likhne wala sirf `MediaGrid` hai (composition me, `rememberUpdatedState` ki tarah).
+ */
+@Stable
+class GridMarks {
+    var selected: Set<String> by mutableStateOf<Set<String>>(emptySet(), referentialEqualityPolicy())
+    var favorites: Set<String> by mutableStateOf<Set<String>>(emptySet(), referentialEqualityPolicy())
+}
+
+/**
+ * Grid ka ek media cell.
+ *
+ * Tap ya long-press yahan handle nahi hota: `MediaGrid` ek hi grid-level gesture se hit-test karke khud `onActivate` /
+ * drag-select chalata hai (pehle har cell par alag `clickable` + `Interaction` state + ripple tha). Yahan sirf TalkBack ke
+ * liye semantics hain: "activate" (`onActivate`) aur "select" (`onSelectAction`). Dono lambda poore grid ke liye ek hi
+ * instance hain, isliye cell skip ho sakta hai.
+ *
+ * `selected` / `favorite` `marks` se derive hote hain (GridMarks ka doc dekho). Badge aur overlay alag composables me padhte
+ * hain, aur semantics block me padhte hain: flip par sirf wahi hisse recompose / re-semantics hote hain, poora cell nahi.
+ */
 @Composable
 fun Thumb(
     item: MediaItem,
+    /** Viewer ka index (`GridEntry.Media.index`): `onActivate` ko wapas milta hai. */
+    index: Int,
     sizePx: Int,
-    selected: Boolean = false,
-    /** true = chhota heart badge (bottom-left). */
-    favorite: Boolean = false,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit = onClick,
-    /** true = long-press grid-level gesture (drag-to-select) handle karta hai; yahan sirf TalkBack action. */
-    longPressHandledByGrid: Boolean = false,
+    marks: GridMarks,
+    onActivate: (MediaItem, Int) -> Unit,
+    onSelectAction: (MediaItem) -> Unit,
     /** Grid se aaya modifier (jaise animateItem()); sabse pehle lagta hai. */
     modifier: Modifier = Modifier,
     /**
@@ -245,6 +276,10 @@ fun Thumb(
             loadNow = true
         }
     }
+    // Is cell ki membership: sirf apni value flip hone par readers invalidate hote hain (baaki cells ko kuch nahi).
+    val key = item.key
+    val selected = remember(marks, key) { derivedStateOf { key in marks.selected } }
+    val favorite = remember(marks, key) { derivedStateOf { key in marks.favorites } }
     // TalkBack ke labels (date, "Selected", "Favorite", "Select") cell banate waqt nahi, balki semantics ko jab
     // zarurat ho (TalkBack on) tabhi bante hain: pehle har cell par 4 stringResource + naya DateFormat banta tha.
     val configuration = LocalConfiguration.current
@@ -258,16 +293,12 @@ fun Thumb(
             else -> null
         }
     }
-    val longClickAction = onLongClick
     Box(
         modifier
             .aspectRatio(1f)
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .then(
-                if (longPressHandledByGrid) Modifier.clickable(onClick = onClick)
-                else Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            )
-            // Ek hi TalkBack node: "Photo, 12 Mar 2025" + selected state.
+            // Ek hi TalkBack node: "Photo, 12 Mar 2025" + selected state. Touch tap/long-press grid-level gesture se aata hai;
+            // TalkBack double-tap yahan ke `onClick` action se chalta hai (touch events ke bina).
             .semantics(mergeDescendants = true) {
                 val dateLabel = ThumbDateFormatter.format(thumbDateMillis(item.dateTaken, item.dateAdded))
                 contentDescription = if (item.isVideo) {
@@ -275,18 +306,19 @@ fun Thumb(
                 } else {
                     res.getString(R.string.thumb_photo_desc, dateLabel)
                 }
-                if (selected || favorite) {
+                val isSelected = selected.value
+                val isFavorite = favorite.value
+                if (isSelected || isFavorite) {
                     val selectedLabel = res.getString(R.string.thumb_selected)
                     val favoriteLabel = res.getString(R.string.thumb_favorite)
                     stateDescription = when {
-                        selected && favorite -> "$selectedLabel, $favoriteLabel"
-                        selected -> selectedLabel
+                        isSelected && isFavorite -> "$selectedLabel, $favoriteLabel"
+                        isSelected -> selectedLabel
                         else -> favoriteLabel
                     }
                 }
-                if (longPressHandledByGrid) {
-                    onLongClick(label = res.getString(R.string.thumb_select_action)) { longClickAction(); true }
-                }
+                onClick { onActivate(item, index); true }
+                onLongClick(label = res.getString(R.string.thumb_select_action)) { onSelectAction(item); true }
             }
     ) {
         if (loadNow) {
@@ -326,31 +358,41 @@ fun Thumb(
                     .padding(horizontal = 5.dp, vertical = 1.dp),
             )
         }
-        if (favorite) {
-            Box(
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(4.dp)
-                    .size(20.dp)
-                    .background(BadgeScrim, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Filled.Favorite, null, tint = Color(0xFFFF6B81), modifier = Modifier.size(12.dp))
-            }
-        }
-        if (selected) {
-            Box(
-                Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.28f)),
-                contentAlignment = Alignment.TopEnd,
-            ) {
-                Icon(
-                    Icons.Filled.CheckCircle,
-                    null,
-                    tint = Color.White,
-                    modifier = Modifier.padding(6.dp).size(22.dp),
-                )
-            }
-        }
+        FavoriteBadge(favorite)
+        SelectedOverlay(selected)
+    }
+}
+
+/** Heart badge (bottom-left). Alag composable: favorite flip par sirf ye recompose hota hai, poora `Thumb` nahi. */
+@Composable
+private fun BoxScope.FavoriteBadge(favorite: State<Boolean>) {
+    if (!favorite.value) return
+    Box(
+        Modifier
+            .align(Alignment.BottomStart)
+            .padding(4.dp)
+            .size(20.dp)
+            .background(BadgeScrim, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Icons.Filled.Favorite, null, tint = Color(0xFFFF6B81), modifier = Modifier.size(12.dp))
+    }
+}
+
+/** Selection ka andhera + check. Alag composable: select/deselect par sirf wahi cell ka ye hissa recompose hota hai. */
+@Composable
+private fun SelectedOverlay(selected: State<Boolean>) {
+    if (!selected.value) return
+    Box(
+        Modifier.fillMaxSize().background(SelectedScrim),
+        contentAlignment = Alignment.TopEnd,
+    ) {
+        Icon(
+            Icons.Filled.CheckCircle,
+            null,
+            tint = Color.White,
+            modifier = Modifier.padding(6.dp).size(22.dp),
+        )
     }
 }
 

@@ -31,8 +31,8 @@ android {
         applicationId = "com.fastgallery.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 46
-        versionName = "1.4.40"
+        versionCode = 52
+        versionName = "1.4.46"
     }
 
     signingConfigs {
@@ -77,6 +77,18 @@ android {
     }
 }
 
+// Compose compiler: MediaItem/Album/GridEntry ko stable batata hai (stability_config.conf). Kotlin 2.2+ par plugin
+// `stabilityConfigurationFiles.add(...)` chahta hai (singular wala deprecated warning deta hai).
+composeCompiler {
+    stabilityConfigurationFile.set(rootProject.layout.projectDirectory.file("stability_config.conf"))
+    // Verify: `gradle assembleRelease -PcomposeReports` -> app/build/compose_reports/*-classes.txt me
+    // "stable class MediaItem" aur *-composables.txt me Thumb "skippable" dikhna chahiye.
+    if (project.hasProperty("composeReports")) {
+        reportsDestination.set(layout.buildDirectory.dir("compose_reports"))
+        metricsDestination.set(layout.buildDirectory.dir("compose_reports"))
+    }
+}
+
 dependencies {
     // BOM 2026.06.01 = Compose 1.11.x (lazy-grid prefetch/scroll perf). 2026.08.00+ (Compose 1.12) ke liye
     // compileSdk 37 + AGP 9 chahiye, isliye abhi yahin ruke hain.
@@ -89,7 +101,6 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
 
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")

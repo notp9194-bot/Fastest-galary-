@@ -52,10 +52,19 @@ import com.fastgallery.app.data.MediaItem
  * Album tap karte hi kaam shuru; folder ka naam type nahi karna padta.
  * onPick(naam, relativePath, move): relativePath = album ka asli folder (null = naya album, naam se banega).
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AlbumPickerSheet(
     source: MediaItem,
+    albums: List<Album>,
+    onDismiss: () -> Unit,
+    onPick: (name: String, relativePath: String?, move: Boolean) -> Unit,
+) = AlbumPickerSheet(listOf(source), albums, onDismiss, onPick)
+
+/** Kai items ke liye: album "current" (move me disabled) tabhi maana jaata hai jab SAARE items usi album me hon. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AlbumPickerSheet(
+    sources: List<MediaItem>,
     albums: List<Album>,
     onDismiss: () -> Unit,
     onPick: (name: String, relativePath: String?, move: Boolean) -> Unit,
@@ -107,7 +116,7 @@ fun AlbumPickerSheet(
                     }
                 }
                 items(albums, key = { it.id }) { album ->
-                    val isCurrent = album.id == source.bucketId
+                    val isCurrent = sources.isNotEmpty() && sources.all { it.bucketId == album.id }
                     // Move ka matlab usi album me wapas daalna bekaar hai; copy chalega (usi album me duplicate).
                     val enabled = !(move && isCurrent)
                     PickerRow(

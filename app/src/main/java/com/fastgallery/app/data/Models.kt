@@ -26,12 +26,8 @@ data class MediaItem(
     /** System trash se auto-delete ka time (seconds); 0 = unknown. */
     val trashExpiresSec: Long = 0L,
 ) {
-    /**
-     * Images aur videos ke IDs collide ho sakte hain; URI is the stable cross-table key.
-     * Stored (getter nahi): grid key lambda, selected/favorite lookups aur viewer har baar `uri.toString()` bulate the.
-     * Data class ke equals/hashCode/copy me nahi aata (constructor property nahi); `copy()` par uri ke hisaab se dobara banta hai.
-     */
-    val key: String = uri.toString()
+    /** Images aur videos ke IDs collide ho sakte hain; URI is the stable cross-table key. */
+    val key: String get() = uri.toString()
 }
 
 data class Album(
@@ -150,3 +146,14 @@ fun MediaItem.isGif(): Boolean = mime.contains("gif", true)
 fun MediaItem.isRaw(): Boolean =
     mime.contains("dng", true) || mime.contains("raw", true) ||
         name.substringAfterLast('.', "").lowercase() in setOf("dng", "nef", "cr2", "cr3", "arw", "orf", "rw2", "raf")
+
+/**
+ * Copy/move ke liye asli kaam wali list. Move me jo items pehle se destination folder me hain unhe chhod do
+ * (copy + delete se wo bas duplicate / rename ho jaate). Copy me sab items.
+ * destRelativePath: MediaStore RELATIVE_PATH jaisa ("DCIM/Camera/"), null = naya album (koi item wahan nahi).
+ */
+fun itemsToTransfer(items: List<MediaItem>, move: Boolean, destRelativePath: String?): List<MediaItem> {
+    if (!move || destRelativePath.isNullOrBlank()) return items
+    val dest = destRelativePath.trim('/')
+    return items.filter { it.relativePath.trim('/') != dest }
+}

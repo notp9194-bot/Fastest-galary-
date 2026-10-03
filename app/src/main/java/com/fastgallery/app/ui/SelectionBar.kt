@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,13 +63,14 @@ val DeleteForeverIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
     )
 }
 
-/** Multi-select ke waqt neeche dikhne wala action bar: Share, Favorite, Trash/Restore, Delete. */
+/** Multi-select ke waqt neeche dikhne wala action bar: Share, Favorite, Copy/Move (Trash tab me nahi), Trash/Restore, Delete. */
 @Composable
 fun SelectionActionBar(
     inTrash: Boolean,
     allFavorite: Boolean,
     onShare: () -> Unit,
     onFavorite: () -> Unit,
+    onCopyMove: () -> Unit,
     onTrashOrRestore: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -91,6 +93,14 @@ fun SelectionActionBar(
                 stringResource(if (allFavorite) R.string.action_unfavorite_short else R.string.action_favorite_short),
                 onFavorite,
             )
+            // Trash me pade items copy/move nahi hote (pehle Restore karo). Icon: nav bar wala ic_albums (folder) hi reuse.
+            if (!inTrash) {
+                SelectionAction(
+                    ImageVector.vectorResource(R.drawable.ic_albums),
+                    stringResource(R.string.action_copy_move_short),
+                    onCopyMove,
+                )
+            }
             SelectionAction(
                 if (inTrash) Icons.Filled.Refresh else Icons.Filled.Delete,
                 stringResource(if (inTrash) R.string.action_restore_short else R.string.action_trash_short),
@@ -111,7 +121,7 @@ private fun SelectionAction(
     Column(
         Modifier
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 4.dp),
+            .padding(horizontal = 10.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))

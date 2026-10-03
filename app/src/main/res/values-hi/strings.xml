@@ -24,6 +24,7 @@
     <string name="action_select_all">सभी चुनें</string>
     <string name="action_deselect_all">सभी का चयन हटाएँ</string>
     <string name="action_favorite_short">पसंदीदा</string>
+    <string name="action_copy_move_short">कॉपी/मूव</string>
     <string name="action_unfavorite_short">पसंदीदा हटाएँ</string>
     <string name="action_trash_short">ट्रैश</string>
     <string name="action_restore_short">वापस लाएँ</string>
@@ -162,6 +163,8 @@
     <string name="bulk_deleting">%2$d में से %1$d हटाए जा रहे हैं</string>
     <string name="bulk_copying">कॉपी हो रहा है…</string>
     <string name="bulk_moving">मूव हो रहा है…</string>
+    <string name="bulk_copying_n">%2$d में से %1$d कॉपी हो रहे हैं</string>
+    <string name="bulk_moving_n">%2$d में से %1$d मूव हो रहे हैं</string>
     <string name="msg_delete_partial">%2$d में से %1$d हटाए गए</string>
     <string name="msg_copy_cancelled">कॉपी रद्द किया गया</string>
     <string name="copy_new_album">नया एल्बम</string>
@@ -247,6 +250,8 @@
     <string name="msg_album_auth_failed">पहचान की पुष्टि नहीं हो सकी। एल्बम लॉक ही रहेगा।</string>
     <string name="msg_copied">%1$s में कॉपी किया गया</string>
     <string name="msg_copy_failed">कॉपी नहीं हो सका। %1$s</string>
+    <string name="msg_copied_n">%1$d आइटम %2$s में कॉपी किए गए</string>
+    <string name="msg_copy_partial">%2$d में से %1$d कॉपी हुए। मूल फ़ाइलें रखी गईं।</string>
     <string name="msg_wallpaper_set">वॉलपेपर लग गया</string>
     <string name="msg_wallpaper_failed">वॉलपेपर सेट नहीं हो सका। %1$s</string>
     <string name="msg_edit_saved">संपादित कॉपी सेव हो गई</string>

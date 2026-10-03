@@ -11,8 +11,6 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import android.content.res.Configuration
-import android.os.SystemClock
-import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.fastgallery.app.ui.PipController
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -117,9 +115,11 @@ import com.fastgallery.app.data.MediaFilter
 import com.fastgallery.app.data.MediaItem
 import com.fastgallery.app.data.MediaOperations
 import com.fastgallery.app.data.buildAlbums
+import com.fastgallery.app.data.itemsToTransfer
 import com.fastgallery.app.data.sortAlbums
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import com.fastgallery.app.ui.AlbumPickerSheet
 import com.fastgallery.app.ui.AlbumsGrid
 import com.fastgallery.app.ui.EmptyState
 import com.fastgallery.app.ui.SkeletonGrid
@@ -144,19 +144,13 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // MediaStore query composition se pehle hi shuru: Compose setup ke saath parallel chalti hai.
         val vm = ViewModelProvider(this)[GalleryViewModel::class.java]
         val access = hasMediaAccess(this)
         if (access) vm.refreshIfNeeded()
-        // Splash tab tak jab tak pehla page aa na jaye (disk cache ya MediaStore, jo pehle), par 700ms se zyada nahi.
-        // Cache hit pe state.loading kuch ms me false ho jaata hai, to splash 700ms tak rukta hi nahi.
-        val splashStart = SystemClock.uptimeMillis()
-        splash.setKeepOnScreenCondition {
-            access && vm.state.value.loading && SystemClock.uptimeMillis() - splashStart < 700L
-        }
+        // Splash nahi: pehla frame turant. Cache hit pe grid seedha dikhta hai, miss pe skeleton.
         setContent { GalleryRoot(vm) }
     }
 
@@ -321,6 +315,8 @@ private fun GalleryContent(
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val tick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) }
     var selected by remember { mutableStateOf(setOf<String>()) }
+    // Multi-select se Copy/Move: album picker sheet jin items ke liye khuli hai (null = band).
+    var copyTargets by remember { mutableStateOf<List<MediaItem>?>(null) }
     var approvalAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     // Bulk delete/copy ka progress. Cancel flag background loop padhta hai (coroutine cancel nahi: cleanup Main pe chahiye).
     var bulk by remember { mutableStateOf<BulkProgress?>(null) }
@@ -366,6 +362,14 @@ private fun GalleryContent(
         displayResult.query?.tab != tab || displayResult.query?.albumId != albumId
     val currentList = if (displayContextStale) emptyList() else displayResult.items
     val currentModel = if (displayContextStale) GridModel.EMPTY else displayResult.model
+    // Copy/move picker me dikhne wale albums (hidden/locked hata ke): viewer aur multi-select dono yahi use karte hain.
+    val pickerAlbums = remember(state.albums, state.hiddenAlbumIds, state.lockedAlbumIds, currentList) {
+        // Albums poore load na hue ho (state.albums khali) to abhi load hui list se banao.
+        val base = state.albums.ifEmpty { buildAlbums(currentList) }
+        base.filter {
+            it.id.toString() !in state.hiddenAlbumIds && it.id.toString() !in state.lockedAlbumIds
+        }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+    }
     val needsCompleteLibrary = tab != 0 ||
         albumId != null ||
         search.isNotBlank() ||
@@ -459,6 +463,65 @@ private fun GalleryContent(
                 requestApproval(MediaStore.createWriteRequest(ctx.contentResolver, listOf(item.uri)).intentSender, action)
             }.onFailure { notify(ctx.getString(R.string.msg_write_request_failed), long = true) }
         } else action()
+    }
+    /**
+     * Copy / move (ek ya kai items). Ek item par pehle jaisa byte-progress; kai items par "x of y" + overall bar.
+     * Move = poori copy safal hone ke BAAD hi un items ke originals delete (Android approval ke saath).
+     * Pehli failure / Cancel par ruk jaata hai: jo copy ho chuke wo rehte hain, originals koi delete nahi hota.
+     */
+    fun copyOrMoveMedia(items: List<MediaItem>, folder: String, move: Boolean, destPath: String?) {
+        val todo = itemsToTransfer(items, move, destPath)
+        if (todo.isEmpty() || bulk != null) return
+        bulkCancel.set(false)
+        selected = emptySet()
+        val total = todo.size
+        val single = total == 1
+        val singleLabel = ctx.getString(if (move) R.string.bulk_moving else R.string.bulk_copying)
+        fun labelAt(n: Int) =
+            if (single) singleLabel else ctx.getString(if (move) R.string.bulk_moving_n else R.string.bulk_copying_n, n, total)
+        bulk = BulkProgress(labelAt(1), if (single) null else 0f)
+        scope.launch(Dispatchers.IO) {
+            val copied = ArrayList<MediaItem>(total)
+            var failure: Throwable? = null
+            var cancelled = false
+            for ((index, item) in todo.withIndex()) {
+                if (bulkCancel.get()) { cancelled = true; break }
+                if (!single) bulk = BulkProgress(labelAt(index + 1), index / total.toFloat())
+                val result = runCatching {
+                    MediaOperations.copyToAlbum(
+                        ctx, item, folder, destPath,
+                        onProgress = { f ->
+                            bulk = BulkProgress(
+                                labelAt(index + 1),
+                                if (single) f.takeIf { it >= 0f } else (index + f.coerceAtLeast(0f)) / total,
+                            )
+                        },
+                        isCancelled = { bulkCancel.get() },
+                    )
+                }
+                val error = result.exceptionOrNull()
+                when {
+                    error is MediaOperations.CopyCancelledException -> { cancelled = true; break }
+                    error != null -> { failure = error; break }
+                    result.getOrNull() == null -> { failure = IllegalStateException("Could not create destination media"); break }
+                    else -> copied += item
+                }
+            }
+            withContext(Dispatchers.Main) {
+                bulk = null
+                if (copied.isNotEmpty()) vm.load()
+                val completed = failure == null && !cancelled
+                when {
+                    !completed && copied.isNotEmpty() ->
+                        notify(ctx.getString(R.string.msg_copy_partial, copied.size, total), long = true)
+                    failure != null -> notify(ctx.getString(R.string.msg_copy_failed, friendlyError(ctx, failure)), long = true)
+                    cancelled -> notify(ctx.getString(R.string.msg_copy_cancelled))
+                    single -> notify(ctx.getString(R.string.msg_copied, folder))
+                    else -> notify(ctx.getString(R.string.msg_copied_n, copied.size, folder))
+                }
+                if (move && completed && copied.isNotEmpty()) deleteMedia(copied)
+            }
+        }
     }
     /**
      * Trash / restore.
@@ -787,6 +850,7 @@ private fun GalleryContent(
                                 .forEach { GalleryPreferences.toggleFavorite(ctx, it) }
                             vm.refreshPreferences()
                         },
+                        onCopyMove = { copyTargets = picked },
                         onTrashOrRestore = {
                             selected = emptySet()
                             trashMedia(picked, tab != 3)
@@ -1120,43 +1184,8 @@ private fun GalleryContent(
                 onSetTrashed = { item, value -> trashMedia(listOf(item), value) },
                 onDelete = { deleteMedia(listOf(it)) },
                 onRename = ::renameMedia,
-                albums = remember(state.albums, state.hiddenAlbumIds, state.lockedAlbumIds, currentList) {
-                    // Albums poore load na hue ho (state.albums khali) to abhi load hui list se banao.
-                    val base = state.albums.ifEmpty { buildAlbums(currentList) }
-                    base.filter {
-                        it.id.toString() !in state.hiddenAlbumIds && it.id.toString() !in state.lockedAlbumIds
-                    }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
-                },
-                onCopyOrMove = { item, folder, move, destPath ->
-                    if (bulk == null) {
-                        bulkCancel.set(false)
-                        val label = ctx.getString(if (move) R.string.bulk_moving else R.string.bulk_copying)
-                        bulk = BulkProgress(label, null)
-                        scope.launch(Dispatchers.IO) {
-                            val result = runCatching {
-                                MediaOperations.copyToAlbum(
-                                    ctx, item, folder, destPath,
-                                    onProgress = { f -> bulk = BulkProgress(label, f.takeIf { it >= 0f }) },
-                                    isCancelled = { bulkCancel.get() },
-                                )
-                            }
-                            withContext(Dispatchers.Main) {
-                                bulk = null
-                                val error = result.exceptionOrNull()
-                                when {
-                                    error is MediaOperations.CopyCancelledException ->
-                                        notify(ctx.getString(R.string.msg_copy_cancelled))
-                                    result.isSuccess && result.getOrNull() != null -> {
-                                        notify(ctx.getString(R.string.msg_copied, folder))
-                                        vm.load()
-                                        if (move) deleteMedia(listOf(item))
-                                    }
-                                    else -> notify(ctx.getString(R.string.msg_copy_failed, friendlyError(ctx, error)), long = true)
-                                }
-                            }
-                        }
-                    }
-                },
+                albums = pickerAlbums,
+                onCopyOrMove = { item, folder, move, destPath -> copyOrMoveMedia(listOf(item), folder, move, destPath) },
                 onWallpaper = { item ->
                     scope.launch(Dispatchers.IO) {
                         val result = runCatching { MediaOperations.setWallpaper(ctx, item) }
@@ -1176,6 +1205,14 @@ private fun GalleryContent(
                         }
                     }
                 },
+            )
+        }
+        copyTargets?.let { targets ->
+            AlbumPickerSheet(
+                sources = targets,
+                albums = pickerAlbums,
+                onDismiss = { copyTargets = null },
+                onPick = { name, path, move -> copyOrMoveMedia(targets, name, move, path); copyTargets = null },
             )
         }
         BulkProgressBar(
