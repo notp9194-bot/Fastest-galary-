@@ -105,6 +105,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.platform.LocalHapticFeedback
 import com.fastgallery.app.data.GallerySort
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.gestures.scrollBy
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlin.math.pow
