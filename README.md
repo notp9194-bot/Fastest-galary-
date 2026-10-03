@@ -51,6 +51,16 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
 - `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
 
+## Updates in 1.4.50
+
+- **Viewer: 3-dot ke options ab swipe-up sheet me bhi.** Photo/video par upar swipe karne se jo sheet khulti thi (sirf details), ab usme upar actions bhi hain: Rename, Copy to…, Move to…, Set as wallpaper (sirf photo), Delete permanently (laal), phir neeche details. 3-dot menu pehle jaisa hi hai (dono jagah same actions).
+  - Action tap par sheet band hoti hai aur wahi flow chalta hai (rename dialog, album picker, wallpaper, delete approval).
+  - Open-with / readOnly viewer me sheet me sirf details (actions nahi), pehle jaisa.
+  - `SheetAction` composable (`Viewer.kt`), naya `WallpaperIcon` (`SelectionBar.kt`, `materialIcon` ab `internal`). Koi naya string nahi, purane strings reuse.
+- Version: `versionName` 1.4.50 / `versionCode` 56.
+
+Build/tests yahan nahi chale. Device par: photo par swipe up -> actions + details dikhein, har action chale, video me wallpaper na dikhe.
+
 ## Updates in 1.4.49
 
 - **CI build fix:** 1.4.46 me `requestApproval` ko `onDenied` param mila tha `action` ke baad, to trailing-lambda call sites (`requestApproval(sender) { ... }`) ka lambda `onDenied` me chala gaya aur `compileDebugKotlin` fail hua ("No value passed for parameter 'action'"). Ab `action` last parameter hai; `deleteMedia` aur `renameMedia` ke positional calls named (`action = action`) kiye.

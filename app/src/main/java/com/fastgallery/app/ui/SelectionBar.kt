@@ -33,7 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.fastgallery.app.R
 
-private fun materialIcon(name: String, path: String): ImageVector =
+internal fun materialIcon(name: String, path: String): ImageVector =
     ImageVector.Builder(name = name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f)
         .addPath(pathData = PathParser().parsePathString(path).toNodes(), fill = SolidColor(Color.Black))
         .build()
@@ -59,6 +59,14 @@ val DeleteForeverIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
     materialIcon(
         "DeleteForever",
         "M6,19c0,1.1 0.9,2 2,2h8c1.1,0 2,-0.9 2,-2V7H6v12zM8.46,11.88l1.41,-1.41L12,12.59l2.12,-2.12 1.41,1.41L13.41,14l2.12,2.12 -1.41,1.41L12,15.41l-2.12,2.12 -1.41,-1.41L10.59,14l-2.13,-2.12zM15.5,4l-1,-1h-5l-1,1H5v2h14V4z",
+    )
+}
+
+/** Material "Wallpaper" icon (extended icons dependency ke bina). */
+val WallpaperIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+    materialIcon(
+        "Wallpaper",
+        "M4,4h7V2H4C2.9,2 2,2.9 2,4v7h2V4zM10,13l-4,5h12l-3,-4 -2.03,2.71L10,13zM17,8.5c0,-0.83 -0.67,-1.5 -1.5,-1.5S14,7.67 14,8.5s0.67,1.5 1.5,1.5S17,9.33 17,8.5zM20,2h-7v2h7v7h2V4C22,2.9 21.1,2 20,2zM20,20h-7v2h7c1.1,0 2,-0.9 2,-2v-7h-2V20zM4,13H2v7c0,1.1 0.9,2 2,2h7v-2H4V13z",
     )
 }
 

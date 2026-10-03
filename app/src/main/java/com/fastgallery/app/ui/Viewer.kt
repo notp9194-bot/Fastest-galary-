@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
@@ -67,6 +68,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -437,6 +439,31 @@ fun Viewer(
                     .padding(bottom = 24.dp)
                     .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility),
             ) {
+                // Swipe-up sheet me wahi actions jo 3-dot menu me hain (dono jagah). Open-with (readOnly) me sirf details.
+                if (!readOnly) {
+                    SheetAction(Icons.Filled.Edit, stringResource(R.string.action_rename)) {
+                        details = null
+                        renameText = item.name
+                        renameTarget = item
+                    }
+                    SheetAction(CopyIcon, stringResource(R.string.action_copy)) { details = null; copyTarget = item }
+                    SheetAction(MoveIcon, stringResource(R.string.action_move_to)) { details = null; moveTarget = item }
+                    if (!item.isVideo) {
+                        SheetAction(WallpaperIcon, stringResource(R.string.action_wallpaper)) { details = null; onWallpaper(item) }
+                    }
+                    SheetAction(
+                        DeleteForeverIcon,
+                        stringResource(R.string.action_delete_permanently),
+                        tint = MaterialTheme.colorScheme.error,
+                    ) { details = null; onDelete(item) }
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                            .height(1.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant),
+                    )
+                }
                 Text(
                     stringResource(R.string.details_title),
                     style = MaterialTheme.typography.titleMedium,
@@ -494,6 +521,27 @@ fun Viewer(
         onEdit(item, edit)
         editTarget = null
     } }
+}
+
+/** Swipe-up sheet ki ek action row (icon + label), poori width tappable. */
+@Composable
+private fun SheetAction(
+    icon: ImageVector,
+    label: String,
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
+        androidx.compose.foundation.layout.Spacer(Modifier.size(20.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = tint)
+    }
 }
 
 /**
