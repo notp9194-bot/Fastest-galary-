@@ -120,6 +120,13 @@
     <string name="settings_private_hint">Long-press an album in the Albums tab to hide or lock it.</string>
     <string name="hidden_albums">Hidden albums</string>
     <string name="locked_albums">Locked albums</string>
+    <string name="settings_display">Display</string>
+    <string name="settings_about">About</string>
+    <string name="settings_version">Version</string>
+    <string name="settings_privacy_policy">Privacy policy</string>
+    <string name="settings_rate_app">Rate this app</string>
+    <!-- Privacy policy page ka https link (GitHub Pages par docs/privacy-policy.html host karke yaha daalo). Khali = row nahi dikhta. -->
+    <string name="privacy_policy_url" translatable="false"></string>
 
     <!-- Hidden / locked album management -->
     <string name="managed_locked_desc">Locked albums ask for device authentication when opened.</string>
@@ -202,6 +209,14 @@
     <string name="filter_mono">Mono</string>
     <string name="filter_warm">Warm</string>
     <string name="filter_cool">Cool</string>
+    <string name="filter_vivid">Vivid</string>
+    <string name="filter_dramatic">Dramatic</string>
+    <string name="filter_fade">Fade</string>
+    <string name="filter_vintage">Vintage</string>
+    <string name="filter_sepia">Sepia</string>
+    <string name="filter_noir">Noir</string>
+    <string name="filter_sunset">Sunset</string>
+    <string name="filter_forest">Forest</string>
     <string name="edit_note">Drag the box or its corners to crop. Saves a new copy; the original stays unchanged.</string>
     <string name="edit_save_copy">Save copy</string>
     <string name="edit_tab_crop">Crop</string>

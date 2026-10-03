@@ -5,6 +5,8 @@ package com.fastgallery.app.ui
 import androidx.compose.animation.AnimatedVisibility
 import android.app.ActivityManager
 import android.content.Context
+import android.os.Build
+import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -81,6 +83,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import coil.compose.AsyncImage
 import coil.imageLoader
+import coil.memory.MemoryCache
 import com.fastgallery.app.data.Album
 import com.fastgallery.app.data.GalleryPreferences
 import com.fastgallery.app.data.ImageEdit
@@ -109,7 +112,9 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.draw.drawWithContent
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.max
+import kotlin.math.min
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -132,6 +137,8 @@ fun Viewer(
     /** Grid me tap hui thumbnail ki window-bounds + uska index: open/close transition isi se chalta hai. */
     origin: Rect? = null,
     originIndex: Int = -1,
+    /** Close ke waqt doosri photo pe swipe karne ke baad bhi uski thumbnail pe shrink karne ke liye. */
+    originLookup: GridOriginLookup? = null,
     /** true = bahar ki URI (Open with): sirf dekhna/zoom/details/share; edit-trash-rename-slideshow nahi. */
     readOnly: Boolean = false,
 ) {
@@ -198,12 +205,29 @@ fun Viewer(
         if (enter.value < 1f) enter.animateTo(1f, tween(300, easing = FastOutSlowInEasing))
         if (!closing) barsController?.hide(WindowInsetsCompat.Type.systemBars())
     }
+    // Transition ki thumbnail: open pe tap hui thumbnail; close pe jis photo pe ho uski (requestClose me set hoti hai).
+    // enter == 1 pe rect ka asar nahi hota, isliye close se pehle badalna safe hai.
+    var animRect by remember { mutableStateOf(origin) }
+    // Grid thumbnail center-crop (square) hota hai, viewer photo Fit. Transition me photo ko crop se fit tak scale karte hain
+    // (aspect = photo ka w/h; 0 = pata nahi / video => koi correction nahi).
+    var animAspect by remember {
+        mutableFloatStateOf(
+            if (origin == null) 0f
+            else items.getOrNull(pager.currentPage)?.takeIf { !it.isVideo }?.let { cachedAspect(ctx, it.uri) } ?: 0f
+        )
+    }
     val requestClose: () -> Unit = {
         if (!closing) {
             closing = true
             // Bars abhi laao: relayout viewer ke opaque rehte hue hota hai, close animation ke baad nahi.
             barsController?.show(WindowInsetsCompat.Type.systemBars())
             scope.launch {
+                val page = pager.currentPage
+                // Jis photo se khola usi pe ho to saved rect; warna grid se us photo ki thumbnail (zaroorat ho to scroll karke).
+                animRect = if (page == originIndex && origin != null) origin
+                else withTimeoutOrNull(500) { originLookup?.rectFor?.invoke(page) }
+                animAspect = if (animRect == null) 0f
+                else items.getOrNull(page)?.takeIf { !it.isVideo }?.let { cachedAspect(ctx, it.uri) } ?: 0f
                 enter.animateTo(0f, tween(240, easing = FastOutSlowInEasing))
                 onClose()
             }
@@ -212,8 +236,6 @@ fun Viewer(
     BackHandler(enabled = true) { requestClose() }
 
     val current = items.getOrNull(pager.currentPage)
-    // Thumbnail sirf tabhi match hota hai jab user abhi bhi usi photo pe ho jis se khola tha.
-    val animRect = if (pager.currentPage == originIndex) origin else null
     val chromeAlpha: GraphicsLayerScope.() -> Unit = {
         alpha = ((enter.value - 0.6f) / 0.4f).coerceIn(0f, 1f)
     }
@@ -257,7 +279,23 @@ fun Viewer(
         ) {
         HorizontalPager(
             state = pager,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().graphicsLayer {
+                // Crop -> fit: shuru me photo thumbnail ki tarah rect ko poora bhare, p = 1 tak normal Fit.
+                val p = enter.value
+                val r = animRect
+                val a = animAspect
+                val w = rootSize.width.toFloat()
+                val h = rootSize.height.toFloat()
+                if (r != null && a > 0f && p < 1f && w > 0f && h > 0f) {
+                    val s0 = max(r.width / w, r.height / h)
+                    val fitH = min(w / a, h)
+                    val coverH = max(r.width / a, r.height)
+                    val k0 = coverH / (fitH * s0)
+                    val k = k0 + (1f - k0) * p
+                    scaleX = k
+                    scaleY = k
+                }
+            },
             beyondViewportPageCount = 0,
             key = { items[it].key },
         ) { page ->
@@ -441,6 +479,22 @@ fun Viewer(
 }
 
 @OptIn(ExperimentalFoundationApi::class)
+/**
+ * Memory cache me pade thumbnail (grid / viewer placeholder) se photo ka dikhne wala aspect ratio (w/h).
+ * Thumbnail me EXIF rotation pehle se lagi hoti hai, isliye MediaStore ke width/height se behtar hai.
+ * Na mile (ya API < 29) to 0 = pata nahi; tab transition me crop-to-fit correction nahi lagta.
+ */
+internal fun cachedAspect(ctx: Context, uri: Uri): Float {
+    if (Build.VERSION.SDK_INT < 29) return 0f
+    val cache = ctx.imageLoader.memoryCache ?: return 0f
+    for (size in intArrayOf(lastGridThumbPx, 512)) {
+        if (size <= 0) continue
+        val bitmap = cache[MemoryCache.Key("thumb:$uri:$size")]?.bitmap ?: continue
+        if (bitmap.width > 0 && bitmap.height > 0) return bitmap.width.toFloat() / bitmap.height
+    }
+    return 0f
+}
+
 @Composable
 private fun ViewerPage(
     item: MediaItem,

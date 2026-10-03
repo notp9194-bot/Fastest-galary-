@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.30
+# Fast Gallery 1.4.31
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -10,7 +10,7 @@ Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26
 - Long-press multi-select with drag-to-select (ungli ghumake ek saath kai items) and bulk share, favorites and trash actions.
 - Rename, copy to another album/folder, or move (copy followed by Android's delete approval).
 - Trash with restore (30-day auto-delete), favorite collection, album hide, and device-authenticated album lock.
-- Full-screen edit screen with live preview: rotate 90°, flip horizontal/vertical, straighten (±45°), drag-to-crop (free, 1:1, 4:3, 3:4, 16:9 with movable corners/edges), brightness/contrast/saturation sliders, Original/Mono/Warm/Cool filters, undo/reset and hold-to-compare (before/after). Edits are saved as a new JPEG; the source is preserved.
+- Full-screen edit screen with live preview: rotate 90°, flip horizontal/vertical, straighten (±45°), drag-to-crop (free, 1:1, 4:3, 3:4, 16:9 with movable corners/edges), brightness/contrast/saturation sliders, 12 filters (Original, Mono, Warm, Cool, Vivid, Dramatic, Fade, Vintage, Sepia, Noir, Sunset, Forest), undo/reset and hold-to-compare (before/after). Edits are saved as a new JPEG; the source is preserved.
 - Set an image as wallpaper and choose System/Light/Dark appearance.
 
 ## Important behavior
@@ -50,6 +50,16 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - `docs/privacy-policy.html` (+ `play-store/PRIVACY_POLICY.md`): privacy policy. GitHub Pages se `/docs` host karo. `[DEVELOPER NAME]` aur `[CONTACT EMAIL]` bharna baaki hai.
 - `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
 - `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
+
+## Updates in 1.4.31
+
+- **Settings icons**: Appearance ab Palette icon (pehle Edit/pencil) aur Haptics ab Vibration icon (pehle CheckCircle) dikhata hai. Dono `ui/Components.kt` me `PaletteIcon` / `VibrationIcon` (Material paths, extended-icons dependency ke bina).
+- **Drag-select upar ka auto-scroll**: pehle upar ka edge zone grid ke top se 80dp tha, jo top bar ki padding ke andar aa jata tha, isliye ungli ko status bar tak le jana padta tha. Ab zone `beforeContentPadding` ke BAAD se shuru hota hai (neeche ke liye `afterContentPadding` ke pehle tak), yaani dikhne wale content ke kinare par hi full speed milti hai. Speed ab bhi 0..1 ramp hai.
+- **Editor filters**: 4 se **12**. Naye: Vivid, Dramatic, Fade, Vintage, Sepia, Noir, Sunset, Forest. Sab ek hi 4x5 colour matrix hain (`MediaOperations.filterMatrix`), isliye preview aur saved copy same dikhte hain, aur brightness/contrast/saturation sliders ke saath pehle jaisa combine hote hain. Ids ki list `MediaOperations.FILTER_IDS`. Labels `strings.xml` (en + hi) me. Filter chips row pehle se horizontally scroll hoti hai.
+- Tests: `EditMathTest` me naye tests (har filter ka matrix valid, alpha neutral, Mono/Noir me rang nahi, Noir Mono se tez, Fade kaale uthata hai, Sepia warm).
+- Version: `versionName` 1.4.31 / `versionCode` 37.
+
+Build/tests yahan nahi chale (Gradle/SDK nahi). CI chalake dekhna; drag-select ka upar wala scroll real device par test karna.
 
 ## Updates in 1.4.30
 

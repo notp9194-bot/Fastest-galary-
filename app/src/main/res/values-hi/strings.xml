@@ -106,6 +106,11 @@
     <string name="settings_private_hint">एल्बम टैब में किसी एल्बम को देर तक दबाकर छिपाएँ या लॉक करें।</string>
     <string name="hidden_albums">छिपे हुए एल्बम</string>
     <string name="locked_albums">लॉक किए हुए एल्बम</string>
+    <string name="settings_display">डिस्प्ले</string>
+    <string name="settings_about">ऐप के बारे में</string>
+    <string name="settings_version">वर्शन</string>
+    <string name="settings_privacy_policy">गोपनीयता नीति</string>
+    <string name="settings_rate_app">ऐप को रेट करें</string>
     <string name="managed_locked_desc">लॉक किए हुए एल्बम खोलते समय डिवाइस प्रमाणीकरण माँगते हैं।</string>
     <string name="managed_hidden_desc">छिपे हुए एल्बम एल्बम और फ़ोटो टैब में नहीं दिखते।</string>
     <string name="managed_add_album">एल्बम जोड़ें</string>
@@ -176,6 +181,14 @@
     <string name="filter_mono">मोनो</string>
     <string name="filter_warm">गर्म</string>
     <string name="filter_cool">ठंडा</string>
+    <string name="filter_vivid">विविड</string>
+    <string name="filter_dramatic">ड्रामैटिक</string>
+    <string name="filter_fade">फ़ेड</string>
+    <string name="filter_vintage">विंटेज</string>
+    <string name="filter_sepia">सेपिया</string>
+    <string name="filter_noir">नॉयर</string>
+    <string name="filter_sunset">सनसेट</string>
+    <string name="filter_forest">फ़ॉरेस्ट</string>
     <string name="edit_note">क्रॉप करने के लिए बॉक्स या उसके कोनों को खींचें। नई कॉपी सेव होती है; मूल फ़ाइल वैसी ही रहती है।</string>
     <string name="edit_save_copy">कॉपी सेव करें</string>
     <string name="edit_tab_crop">क्रॉप</string>

@@ -72,6 +72,55 @@ class EditMathTest {
     }
 
     @Test
+    fun everyListedFilterHasAValidMatrixExceptOriginal() {
+        assertEquals("Original", MediaOperations.FILTER_IDS.first())
+        assertEquals(MediaOperations.FILTER_IDS.size, MediaOperations.FILTER_IDS.toSet().size)
+        for (id in MediaOperations.FILTER_IDS) {
+            val m = MediaOperations.filterMatrix(id)
+            if (id == "Original") {
+                assertNull(m)
+            } else {
+                assertEquals("$id matrix size", 20, m!!.size)
+                // Alpha row neutral: filter transparency nahi badalta.
+                assertArrayEquals("$id alpha", floatArrayOf(0f, 0f, 0f, 1f, 0f), m.copyOfRange(15, 20), 1e-4f)
+            }
+        }
+    }
+
+    @Test
+    fun unknownFilterIdBehavesLikeOriginal() {
+        assertNull(MediaOperations.filterMatrix("DoesNotExist"))
+    }
+
+    @Test
+    fun noirAndMonoLeaveNoColour() {
+        for (id in listOf("Mono", "Noir")) {
+            val out = apply(MediaOperations.filterMatrix(id)!!, 200f, 100f, 50f)
+            assertEquals("$id r=g", out[0], out[1], 1e-2f)
+            assertEquals("$id g=b", out[1], out[2], 1e-2f)
+        }
+    }
+
+    @Test
+    fun noirIsHarsherThanMono() {
+        val mono = apply(MediaOperations.filterMatrix("Mono")!!, 200f, 200f, 200f)[0]
+        val noir = apply(MediaOperations.filterMatrix("Noir")!!, 200f, 200f, 200f)[0]
+        assertTrue("bright pixel should get brighter in Noir ($noir > $mono)", noir > mono)
+    }
+
+    @Test
+    fun fadeLiftsBlacks() {
+        val out = apply(MediaOperations.filterMatrix("Fade")!!, 0f, 0f, 0f)
+        assertTrue("black should be lifted, got ${out[0]}", out[0] > 8f)
+    }
+
+    @Test
+    fun sepiaTurnsGreyIntoWarmBrown() {
+        val out = apply(MediaOperations.filterMatrix("Sepia")!!, 100f, 100f, 100f)
+        assertTrue(out[0] > out[1] && out[1] > out[2])
+    }
+
+    @Test
     fun brightnessShiftsEveryChannelByTheSameAmount() {
         val m = MediaOperations.colorMatrix("Original", 50f, 0f, 0f)!!
         // +50 => offset 40 (+100 = 80 ka aadha).

@@ -408,6 +408,14 @@ fun EditDialog(item: MediaItem, onDismiss: () -> Unit, onSave: (ImageEdit) -> Un
                                     "Mono" to R.string.filter_mono,
                                     "Warm" to R.string.filter_warm,
                                     "Cool" to R.string.filter_cool,
+                                    "Vivid" to R.string.filter_vivid,
+                                    "Dramatic" to R.string.filter_dramatic,
+                                    "Fade" to R.string.filter_fade,
+                                    "Vintage" to R.string.filter_vintage,
+                                    "Sepia" to R.string.filter_sepia,
+                                    "Noir" to R.string.filter_noir,
+                                    "Sunset" to R.string.filter_sunset,
+                                    "Forest" to R.string.filter_forest,
                                 ).forEach { (option, labelRes) ->
                                     EditChip(
                                         selected = editor.filter == option,

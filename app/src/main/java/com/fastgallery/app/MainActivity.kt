@@ -295,6 +295,7 @@ private fun GalleryContent(
     var viewerIndex by rememberSaveable { mutableIntStateOf(-1) }
     var viewerOrigin by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     var viewerOriginIndex by remember { mutableIntStateOf(-1) }
+    val gridOriginLookup = remember { com.fastgallery.app.ui.GridOriginLookup() }
     // Settings sub-screens: 0 = main, 1 = hidden albums, 2 = locked albums
     var settingsPage by rememberSaveable { mutableIntStateOf(0) }
     var albumMenuOpen by remember { mutableStateOf(false) }
@@ -991,6 +992,7 @@ private fun GalleryContent(
                         resetKey = Triple(sort, filter, search),
                         sort = sort,
                         onScrubStart = vm::loadAll,
+                        originLookup = gridOriginLookup,
                         onOpen = { index, rect ->
                             if (pick != null) {
                                 // Picker: single me turant wapas, multiple me pehla item select (phir tap se toggle).
@@ -1079,6 +1081,7 @@ private fun GalleryContent(
                 onClose = { viewerIndex = -1 },
                 origin = viewerOrigin,
                 originIndex = viewerOriginIndex,
+                originLookup = gridOriginLookup,
                 onFavorite = { tick(); GalleryPreferences.toggleFavorite(ctx, it); vm.refreshPreferences() },
                 onSetTrashed = { item, value -> trashMedia(listOf(item), value) },
                 onDelete = { deleteMedia(listOf(it)) },

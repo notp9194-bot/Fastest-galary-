@@ -337,6 +337,26 @@ object MediaOperations {
             0 to false
         }
 
+    /**
+     * Editor ke filter ids, dikhne ke order me. Pehla "Original" (koi change nahi). UI chips aur tests yahi list use karte hain;
+     * naya filter jodna ho to yahan id, [filterMatrix] me matrix, aur strings.xml (en + hi) me label add karo.
+     */
+    val FILTER_IDS: List<String> = listOf(
+        "Original", "Mono", "Warm", "Cool",
+        "Vivid", "Dramatic", "Fade", "Vintage", "Sepia", "Noir", "Sunset", "Forest",
+    )
+
+    /** Contrast ka 4x5 matrix: 128 (middle grey) fixed rehta hai. */
+    internal fun contrastMatrix(scale: Float): FloatArray {
+        val shift = 128f * (1f - scale)
+        return floatArrayOf(
+            scale, 0f, 0f, 0f, shift,
+            0f, scale, 0f, 0f, shift,
+            0f, 0f, scale, 0f, shift,
+            0f, 0f, 0f, 1f, 0f,
+        )
+    }
+
     /** 4x5 colour matrix for a filter id, or null for "Original". Shared by the edit preview and the saved copy. */
     fun filterMatrix(filter: String): FloatArray? = when (filter) {
         "Mono" -> ColorMatrix().apply { setSaturation(0f) }.array
@@ -347,6 +367,59 @@ object MediaOperations {
         "Cool" -> floatArrayOf(
             0.92f, 0f, 0f, 0f, 0f, 0f, 1.02f, 0f, 0f, 0f,
             0f, 0f, 1.12f, 0f, 12f, 0f, 0f, 0f, 1f, 0f,
+        )
+        // Rang gehre + halka contrast.
+        "Vivid" -> concatColorMatrices(saturationMatrix(1.4f), contrastMatrix(1.08f))
+        // Mazboot contrast, thoda extra saturation.
+        "Dramatic" -> concatColorMatrices(saturationMatrix(1.15f), contrastMatrix(1.3f))
+        // Faded look: kam saturation, kaale thode uthe hue (matte).
+        "Fade" -> concatColorMatrices(
+            concatColorMatrices(saturationMatrix(0.8f), contrastMatrix(0.88f)),
+            floatArrayOf(
+                1f, 0f, 0f, 0f, 8f,
+                0f, 1f, 0f, 0f, 8f,
+                0f, 0f, 1f, 0f, 8f,
+                0f, 0f, 0f, 1f, 0f,
+            ),
+        )
+        // Purani film: kam saturation, halka warm tint, thoda faded.
+        "Vintage" -> concatColorMatrices(
+            concatColorMatrices(saturationMatrix(0.7f), contrastMatrix(0.94f)),
+            floatArrayOf(
+                1.08f, 0f, 0f, 0f, 14f,
+                0f, 1.0f, 0f, 0f, 6f,
+                0f, 0f, 0.82f, 0f, 0f,
+                0f, 0f, 0f, 1f, 0f,
+            ),
+        )
+        // Classic sepia (standard coefficients).
+        "Sepia" -> floatArrayOf(
+            0.393f, 0.769f, 0.189f, 0f, 0f,
+            0.349f, 0.686f, 0.168f, 0f, 0f,
+            0.272f, 0.534f, 0.131f, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f,
+        )
+        // Black & white + tez contrast.
+        "Noir" -> concatColorMatrices(saturationMatrix(0f), contrastMatrix(1.35f))
+        // Golden-hour: gehra warm, halka gulabi.
+        "Sunset" -> concatColorMatrices(
+            saturationMatrix(1.2f),
+            floatArrayOf(
+                1.15f, 0f, 0f, 0f, 10f,
+                0f, 0.97f, 0f, 0f, 0f,
+                0f, 0f, 0.92f, 0f, 6f,
+                0f, 0f, 0f, 1f, 0f,
+            ),
+        )
+        // Hara-bhara: green zyada, red/blue thoda kam.
+        "Forest" -> concatColorMatrices(
+            saturationMatrix(1.1f),
+            floatArrayOf(
+                0.94f, 0f, 0f, 0f, 0f,
+                0f, 1.1f, 0f, 0f, 4f,
+                0f, 0f, 0.94f, 0f, 0f,
+                0f, 0f, 0f, 1f, 0f,
+            ),
         )
         else -> null
     }

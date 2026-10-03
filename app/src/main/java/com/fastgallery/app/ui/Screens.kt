@@ -1,5 +1,6 @@
 package com.fastgallery.app.ui
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.input.pointer.pointerInput
@@ -82,7 +85,8 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Settings as SettingsGear
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.vectorResource
@@ -203,6 +207,22 @@ fun RefreshableBox(
     ) { content() }
 }
 
+/**
+ * Grid <-> Viewer bridge: viewer close hote waqt kisi bhi index ki thumbnail ka window rect chahiye
+ * (user ne viewer me swipe karke doosri photo pe pahunch ke close kiya ho tab bhi).
+ * Baseline tap ke waqt (system bars dikh rahe hote hain) ki grid-origin hai: viewer me bars chhupne se grid ka
+ * layout badalta hai, isliye rect hamesha is baseline + item ke content-offset se banta hai.
+ */
+class GridOriginLookup {
+    /** Index ki thumbnail ka window rect; zaroorat ho to grid ko scroll karke dikhata hai. Na mile to null. */
+    var rectFor: (suspend (Int) -> Rect?)? = null
+    internal var baseX = 0f
+    internal var baseY = 0f
+    /** Content area (padding ke bina) ki height aur sticky header ki height, tap ke waqt ki. */
+    internal var contentHeight = 0f
+    internal var topMargin = 0f
+}
+
 /** Grid ne aakhri baar thumbnails kis px size pe decode kiye (0 = abhi pata nahi). Viewer open-placeholder ke liye. */
 @Volatile
 internal var lastGridThumbPx: Int = 0
@@ -230,6 +250,8 @@ fun MediaGrid(
     onScrubStart: () -> Unit = {},
     /** false = picker (single) mode: date header tap se selection nahi hota. */
     daySelectEnabled: Boolean = true,
+    /** Viewer ke close-transition ke liye: koi bhi index ki thumbnail ka rect yahan se milta hai. */
+    originLookup: GridOriginLookup? = null,
 ) {
     val entries = remember(contentVersion) { com.fastgallery.app.data.buildEntries(items) }
     // Header key -> us header ke neeche ke media keys (agle header tak). Date sort me ek din, Name/Size sort me ek run.
@@ -336,6 +358,39 @@ fun MediaGrid(
         }
     }
     var gridWindowPos by remember { mutableStateOf(Offset.Zero) }
+    val contentOriginXPx = with(density) { padding.calculateLeftPadding(androidx.compose.ui.platform.LocalLayoutDirection.current).toPx() }
+    val currentOriginX by rememberUpdatedState(contentOriginXPx)
+    if (originLookup != null) {
+        // entry.index (viewer ka index) -> grid entries ki position
+        val entryPosByIndex = remember(entries) {
+            HashMap<Int, Int>().also { m -> entries.forEachIndexed { pos, e -> if (e is GridEntry.Media) m[e.index] = pos } }
+        }
+        DisposableEffect(originLookup, entryPosByIndex) {
+            val finder: suspend (Int) -> Rect? = finder@{ index ->
+                val pos = entryPosByIndex[index] ?: return@finder null
+                fun find() = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == pos }
+                var info = find()
+                val comfortable = info != null &&
+                    info.offset.y >= originLookup.topMargin &&
+                    info.offset.y + info.size.height <= originLookup.contentHeight
+                if (!comfortable) {
+                    // Thumbnail screen ke bahar (ya header/bar ke neeche): grid ko beech me scroll karo (viewer ke peeche, dikhta nahi).
+                    val cell = gridState.layoutInfo.visibleItemsInfo
+                        .firstOrNull { currentEntries.getOrNull(it.index) is GridEntry.Media }?.size?.height ?: 0
+                    gridState.scrollToItem(pos, -((originLookup.contentHeight - cell) / 2f).toInt())
+                    repeat(2) { withFrameNanos { } }
+                    info = find()
+                }
+                info?.let {
+                    val left = originLookup.baseX + it.offset.x
+                    val top = originLookup.baseY + it.offset.y
+                    Rect(left, top, left + it.size.width, top + it.size.height)
+                }
+            }
+            originLookup.rectFor = finder
+            onDispose { if (originLookup.rectFor === finder) originLookup.rectFor = null }
+        }
+    }
     Box(Modifier.fillMaxSize().onGloballyPositioned { gridWindowPos = it.positionInWindow() }) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(gridColumns),
@@ -353,9 +408,14 @@ fun MediaGrid(
                         awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
 
                         fun hitEntryIndex(pos: Offset): Int {
-                            val hit = gridState.layoutInfo.visibleItemsInfo.firstOrNull {
-                                pos.x >= it.offset.x && pos.x < it.offset.x + it.size.width &&
-                                    pos.y >= it.offset.y && pos.y < it.offset.y + it.size.height
+                            // LazyGrid ke item offsets contentPadding (top bar ki height) ke bina hote hain;
+                            // touch point grid ke andar ka hai, isliye padding hata ke content coordinates me lao.
+                            val info = gridState.layoutInfo
+                            val px = pos.x - currentOriginX
+                            val py = pos.y - info.beforeContentPadding
+                            val hit = info.visibleItemsInfo.firstOrNull {
+                                px >= it.offset.x && px < it.offset.x + it.size.width &&
+                                    py >= it.offset.y && py < it.offset.y + it.size.height
                             } ?: return -1
                             return if (currentEntries.getOrNull(hit.index) is GridEntry.Media) hit.index else -1
                         }
@@ -382,10 +442,16 @@ fun MediaGrid(
                         val autoScroll = scope.launch {
                             while (true) {
                                 delay(16)
-                                val h = gridState.layoutInfo.viewportSize.height.toFloat()
+                                // Grid top/bottom bar ke neeche tak failta hai (contentPadding), isliye edge zone
+                                // padding ke BAAD se shuru hota hai: dikhne wale content ke upar/neeche kinare par ungli
+                                // le jane se hi auto-scroll chalta hai, ungli ko status/top bar tak nahi le jana padta.
+                                val info = gridState.layoutInfo
+                                val h = info.viewportSize.height.toFloat()
+                                val topZoneEnd = info.beforeContentPadding + edgePx
+                                val bottomZoneStart = h - info.afterContentPadding - edgePx
                                 val speed = when {
-                                    lastPos.y < edgePx -> -(edgePx - lastPos.y) / edgePx
-                                    lastPos.y > h - edgePx -> (lastPos.y - (h - edgePx)) / edgePx
+                                    lastPos.y < topZoneEnd -> -(topZoneEnd - lastPos.y) / edgePx
+                                    lastPos.y > bottomZoneStart -> (lastPos.y - bottomZoneStart) / edgePx
                                     else -> 0f
                                 }.coerceIn(-1f, 1f)
                                 if (speed != 0f) {
@@ -532,12 +598,17 @@ fun MediaGrid(
                             else {
                                 val info = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == entry.item.key }
                                 val rect = info?.let {
-                                    Rect(
-                                        gridWindowPos.x + it.offset.x,
-                                        gridWindowPos.y + it.offset.y,
-                                        gridWindowPos.x + it.offset.x + it.size.width,
-                                        gridWindowPos.y + it.offset.y + it.size.height,
-                                    )
+                                    // Item offset contentPadding ke bina hai: window position me padding jodo.
+                                    val left = gridWindowPos.x + contentOriginXPx + it.offset.x
+                                    val top = gridWindowPos.y + gridState.layoutInfo.beforeContentPadding + it.offset.y
+                                    Rect(left, top, left + it.size.width, top + it.size.height)
+                                }
+                                originLookup?.let { l ->
+                                    val li = gridState.layoutInfo
+                                    l.baseX = gridWindowPos.x + contentOriginXPx
+                                    l.baseY = gridWindowPos.y + li.beforeContentPadding
+                                    l.contentHeight = (li.viewportSize.height - li.beforeContentPadding - li.afterContentPadding).toFloat()
+                                    l.topMargin = stickyHeightPx.toFloat()
                                 }
                                 onOpen(entry.index, rect)
                             }
@@ -818,6 +889,33 @@ private fun SettingTitle(icon: ImageVector, text: String) {
     }
 }
 
+/** Settings ka ek group: upar chhota label, neeche rounded card (premium apps jaisa). */
+@Composable
+private fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 12.dp, bottom = 8.dp),
+        )
+        androidx.compose.material3.Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+        ) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), content = content)
+        }
+    }
+}
+
+@Composable
+private fun CardDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(vertical = 4.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+    )
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
@@ -846,111 +944,174 @@ fun SettingsScreen(
     androidx.compose.foundation.lazy.LazyColumn(
         Modifier.fillMaxSize().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 640.dp),
         contentPadding = PaddingValues(
-            start = 20.dp, end = 20.dp,
+            start = 16.dp, end = 16.dp,
             top = padding.calculateTopPadding() + 12.dp,
             bottom = padding.calculateBottomPadding() + 20.dp,
         ),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        // --- Display ---
         item {
-            SettingTitle(Icons.Filled.Edit, stringResource(R.string.settings_appearance))
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(start = SettingIndent, top = 8.dp),
-            ) {
-                listOf(
-                    "system" to R.string.theme_system,
-                    "light" to R.string.theme_light,
-                    "dark" to R.string.theme_dark,
-                ).forEach { (value, labelRes) ->
-                    val label = stringResource(labelRes)
-                    if (theme == value) Button(onClick = { onTheme(value) }) { Text(label) }
-                    else OutlinedButton(onClick = { onTheme(value) }) { Text(label) }
+            SettingsCard(stringResource(R.string.settings_display)) {
+                SettingTitle(PaletteIcon, stringResource(R.string.settings_appearance))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(start = SettingIndent, top = 8.dp, bottom = 8.dp),
+                ) {
+                    listOf(
+                        "system" to R.string.theme_system,
+                        "light" to R.string.theme_light,
+                        "dark" to R.string.theme_dark,
+                    ).forEach { (value, labelRes) ->
+                        val label = stringResource(labelRes)
+                        if (theme == value) Button(onClick = { onTheme(value) }) { Text(label) }
+                        else OutlinedButton(onClick = { onTheme(value) }) { Text(label) }
+                    }
                 }
+                CardDivider()
+                SettingTitle(ImageVector.vectorResource(R.drawable.ic_photos), stringResource(R.string.settings_grid_columns, columns.coerceAtLeast(2)))
+                Slider(
+                    value = columns.coerceIn(2, 8).toFloat(),
+                    onValueChange = { onColumns(it.toInt().coerceIn(2, 8)) },
+                    valueRange = 2f..8f,
+                    steps = 5,
+                    modifier = Modifier.padding(start = SettingIndent),
+                )
+                Text(
+                    stringResource(R.string.settings_pinch_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = SettingIndent, bottom = 8.dp),
+                )
+                CardDivider()
+                SettingTitle(SortIcon, stringResource(R.string.settings_default_sort))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(start = SettingIndent, top = 8.dp, bottom = 8.dp),
+                ) {
+                    listOf(
+                        GallerySort.DATE_NEWEST to R.string.sort_newest,
+                        GallerySort.DATE_OLDEST to R.string.sort_oldest,
+                        GallerySort.NAME to R.string.sort_name,
+                        GallerySort.SIZE_LARGEST to R.string.sort_largest,
+                    ).forEach { (value, labelRes) ->
+                        FilterChip(selected = sort == value, onClick = { onSort(value) }, label = { Text(stringResource(labelRes)) })
+                    }
+                }
+                CardDivider()
+                SettingSwitchRow(VibrationIcon, stringResource(R.string.settings_haptics), haptics, onHaptics)
             }
         }
+        // --- Video ---
         item {
-            HorizontalDivider()
-            SettingTitle(ImageVector.vectorResource(R.drawable.ic_photos), stringResource(R.string.settings_grid_columns, columns.coerceAtLeast(2)))
-            Slider(
-                value = columns.coerceIn(2, 8).toFloat(),
-                onValueChange = { onColumns(it.toInt().coerceIn(2, 8)) },
-                valueRange = 2f..8f,
-                steps = 5,
-                modifier = Modifier.padding(start = SettingIndent),
-            )
-            Text(
-                stringResource(R.string.settings_pinch_hint),
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(start = SettingIndent),
-            )
-        }
-        item {
-            HorizontalDivider()
-            SettingTitle(SortIcon, stringResource(R.string.settings_default_sort))
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(start = SettingIndent, top = 8.dp),
-            ) {
-                listOf(
-                    GallerySort.DATE_NEWEST to R.string.sort_newest,
-                    GallerySort.DATE_OLDEST to R.string.sort_oldest,
-                    GallerySort.NAME to R.string.sort_name,
-                    GallerySort.SIZE_LARGEST to R.string.sort_largest,
-                ).forEach { (value, labelRes) ->
-                    FilterChip(selected = sort == value, onClick = { onSort(value) }, label = { Text(stringResource(labelRes)) })
+            SettingsCard(stringResource(R.string.settings_video)) {
+                SettingTitle(RepeatIcon, stringResource(R.string.settings_slideshow_speed))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(start = SettingIndent, top = 8.dp, bottom = 8.dp),
+                ) {
+                    listOf(2000, 3000, 5000, 8000).forEach { ms ->
+                        FilterChip(
+                            selected = slideshowMs == ms,
+                            onClick = { onSlideshowMs(ms) },
+                            label = { Text(stringResource(R.string.settings_seconds, (ms / 1000).toString())) },
+                        )
+                    }
                 }
+                CardDivider()
+                SettingSwitchRow(Icons.Filled.PlayArrow, stringResource(R.string.settings_video_autoplay), videoAutoplay, onVideoAutoplay)
+                SettingSwitchRow(if (videoMuted) VolumeOffIcon else VolumeUpIcon, stringResource(R.string.settings_video_muted), videoMuted, onVideoMuted)
             }
         }
+        // --- Private albums ---
         item {
-            HorizontalDivider()
-            SettingTitle(RepeatIcon, stringResource(R.string.settings_slideshow_speed))
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(start = SettingIndent, top = 8.dp),
-            ) {
-                listOf(2000, 3000, 5000, 8000).forEach { ms ->
-                    FilterChip(
-                        selected = slideshowMs == ms,
-                        onClick = { onSlideshowMs(ms) },
-                        label = { Text(stringResource(R.string.settings_seconds, (ms / 1000).toString())) },
-                    )
-                }
+            SettingsCard(stringResource(R.string.settings_private_albums)) {
+                Text(
+                    stringResource(R.string.settings_private_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                )
+                SummaryRow(ImageVector.vectorResource(R.drawable.ic_albums), stringResource(R.string.hidden_albums), hiddenCount, onOpenHidden)
+                CardDivider()
+                SummaryRow(Icons.Filled.Lock, stringResource(R.string.locked_albums), lockedCount, onOpenLocked)
             }
         }
+        // --- Trash ---
         item {
-            HorizontalDivider()
-            SettingTitle(PipIcon, stringResource(R.string.settings_video))
-            SettingSwitchRow(Icons.Filled.PlayArrow, stringResource(R.string.settings_video_autoplay), videoAutoplay, onVideoAutoplay)
-            SettingSwitchRow(if (videoMuted) VolumeOffIcon else VolumeUpIcon, stringResource(R.string.settings_video_muted), videoMuted, onVideoMuted)
+            SettingsCard(stringResource(R.string.nav_trash)) {
+                Text(
+                    stringResource(R.string.settings_trash_hint, (GalleryPreferences.TRASH_RETENTION_MS / 86_400_000L).toInt()),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                )
+                SummaryRow(Icons.Filled.Delete, stringResource(R.string.settings_trash_open), trashCount, onOpenTrash)
+            }
         }
+        // --- About ---
         item {
-            HorizontalDivider()
-            SettingSwitchRow(Icons.Filled.CheckCircle, stringResource(R.string.settings_haptics), haptics, onHaptics)
+            val ctx = LocalContext.current
+            val versionName = remember(ctx) {
+                runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull().orEmpty()
+            }
+            val privacyUrl = stringResource(R.string.privacy_policy_url)
+            SettingsCard(stringResource(R.string.settings_about)) {
+                InfoRow(Icons.Filled.SettingsGear, stringResource(R.string.settings_version), versionName)
+                if (privacyUrl.startsWith("https://")) {
+                    CardDivider()
+                    LinkRow(Icons.Filled.Lock, stringResource(R.string.settings_privacy_policy)) { openLink(ctx, privacyUrl) }
+                }
+                CardDivider()
+                LinkRow(Icons.Filled.Favorite, stringResource(R.string.settings_rate_app)) { openPlayListing(ctx) }
+            }
         }
-        item {
-            HorizontalDivider()
-            SettingTitle(Icons.Filled.Delete, stringResource(R.string.nav_trash))
-            Text(
-                stringResource(R.string.settings_trash_hint, (GalleryPreferences.TRASH_RETENTION_MS / 86_400_000L).toInt()),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = SettingIndent),
-            )
-        }
-        item { SummaryRow(Icons.Filled.Delete, stringResource(R.string.settings_trash_open), trashCount, onOpenTrash) }
-        item {
-            HorizontalDivider()
-            SettingTitle(Icons.Filled.Lock, stringResource(R.string.settings_private_albums))
-            Text(
-                stringResource(R.string.settings_private_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = SettingIndent),
-            )
-        }
-        item { SummaryRow(ImageVector.vectorResource(R.drawable.ic_albums), stringResource(R.string.hidden_albums), hiddenCount, onOpenHidden) }
-        item { SummaryRow(Icons.Filled.Lock, stringResource(R.string.locked_albums), lockedCount, onOpenLocked) }
+    }
+}
+
+private fun openLink(ctx: android.content.Context, url: String) {
+    try {
+        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    } catch (_: ActivityNotFoundException) {
+    }
+}
+
+/** Play Store app me apni listing kholta hai; Play Store na ho to browser me. */
+private fun openPlayListing(ctx: android.content.Context) {
+    val pkg = ctx.packageName
+    try {
+        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$pkg")))
+    } catch (_: ActivityNotFoundException) {
+        openLink(ctx, "https://play.google.com/store/apps/details?id=$pkg")
+    }
+}
+
+@Composable
+private fun InfoRow(icon: ImageVector, label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        SettingIcon(icon)
+        Spacer(Modifier.width(16.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun LinkRow(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SettingIcon(icon)
+        Spacer(Modifier.width(16.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.weight(1f))
+        Text("›", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
