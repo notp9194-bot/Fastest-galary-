@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.46
+# Fast Gallery 1.4.44
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -50,18 +50,6 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - `docs/privacy-policy.html` (+ `play-store/PRIVACY_POLICY.md`): privacy policy. GitHub Pages se `/docs` host karo. `[DEVELOPER NAME]` aur `[CONTACT EMAIL]` bharna baaki hai.
 - `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
 - `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
-
-## Updates in 1.4.46
-
-- **Splash screen hata di**: `installSplashScreen()` aur `setKeepOnScreenCondition` (700 ms tak ka wait) `MainActivity` se hate, `androidx.core:core-splashscreen` dependency aur `Theme.Gallery.Starting` hata diye, `MainActivity` ab seedha `Theme.Gallery` use karta hai. Pehla frame ab kisi condition ka intezaar nahi karta: cache hit pe grid seedha, miss pe skeleton.
-  - Android 12+ par OS har cold start pe system splash dikhata hi hai (band nahi hota). Isliye `values-v31` / `values-night-v31` me `Theme.Gallery` ka splash background = window bg (`@color/bg`), icon = transparent (`drawable/splash_empty.xml`), animation 0 ms. Dikhta sirf khali bg hai jo seedha app frame me badal jaata hai.
-  - Android 8-11 par windowBackground (`@color/bg`) hi preview hai: pehle jaisa, bas ab purple splash nahi.
-- **Cold start ka kaam pehle shuru** (`data/StartupPreload.kt`): pehle page ki disk cache + prefs sets (favorites/trash/hidden/locked) ab `GalleryApp.onCreate` se alag thread par padhe jaate hain (media permission ho tab), Activity/ViewModel banne ka intezaar kiye bina. `GalleryViewModel` `StartupPreload.consume()` se wahi result leta hai (one-shot, sirf process ki pehli ViewModel ko). `FirstPageCache.shared(context)`: preload aur ViewModel ek hi cache instance share karte hain.
-- **First paint se blocking kaam hata**: (1) `purgeExpiredFallbackTrash()` (API < 30) ab pehla page publish hone ke BAAD chalta hai (pehle query se pehle chalta tha). (2) `setSort` / `setFilter` ab same value ho to disk write nahi karte (pehle har launch par `LaunchedEffect` do prefs write karwata tha).
-- Tests: `StartupPreloadTest` (cache miss, saved items, one-shot consume, shared singleton).
-- Version: `versionName` 1.4.46 / `versionCode` 52.
-
-**200 ms ka guarantee yahan naapa nahi gaya** (Gradle/SDK/device nahi tha, build/tests nahi chale). Asli cold-start time device, process-start aur ART compile par depend karta hai. Sabse bada lever abhi baaki hai: `baseline-prof.txt` hand-curated hai, measured nahi. Device par `./gradlew :app:generateBaselineProfile` chalake `app/src/main/generated/baselineProfiles/` commit karo, phir `baseline-prof.txt` delete karo. Naapne ke liye `StartupBenchmarks` (`timeToInitialDisplay`), 1-2 warm-up run ke baad (pehli iteration me cache miss hoti hai).
 
 ## Updates in 1.4.45
 

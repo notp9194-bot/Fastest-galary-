@@ -1,8 +1,0 @@
-<resources>
-    <style name="Theme.Gallery" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@color/bg</item>
-        <item name="android:windowSplashScreenBackground">@color/bg</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_empty</item>
-        <item name="android:windowSplashScreenAnimationDuration">0</item>
-    </style>
-</resources>

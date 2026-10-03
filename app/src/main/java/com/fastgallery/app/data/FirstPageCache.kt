@@ -128,14 +128,6 @@ class FirstPageCache(context: Context, fileName: String = FILE_NAME) {
 
     companion object {
         private const val TAG = "FirstPageCache"
-        @Volatile private var shared: FirstPageCache? = null
-
-        /** Process-wide instance: Application ka preload aur ViewModel ek hi cache (aur `last`) share karte hain. */
-        fun shared(context: Context): FirstPageCache =
-            shared ?: synchronized(this) {
-                shared ?: FirstPageCache(context.applicationContext).also { shared = it }
-            }
-
         private const val FILE_NAME = "first_page.bin"
         private const val VERSION = 1
         const val MAX_ITEMS = 120

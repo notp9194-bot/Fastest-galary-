@@ -11,6 +11,8 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import android.content.res.Configuration
+import android.os.SystemClock
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.fastgallery.app.ui.PipController
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -144,13 +146,19 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // MediaStore query composition se pehle hi shuru: Compose setup ke saath parallel chalti hai.
         val vm = ViewModelProvider(this)[GalleryViewModel::class.java]
         val access = hasMediaAccess(this)
         if (access) vm.refreshIfNeeded()
-        // Splash nahi: pehla frame turant. Cache hit pe grid seedha dikhta hai, miss pe skeleton.
+        // Splash tab tak jab tak pehla page aa na jaye (disk cache ya MediaStore, jo pehle), par 700ms se zyada nahi.
+        // Cache hit pe state.loading kuch ms me false ho jaata hai, to splash 700ms tak rukta hi nahi.
+        val splashStart = SystemClock.uptimeMillis()
+        splash.setKeepOnScreenCondition {
+            access && vm.state.value.loading && SystemClock.uptimeMillis() - splashStart < 700L
+        }
         setContent { GalleryRoot(vm) }
     }
 

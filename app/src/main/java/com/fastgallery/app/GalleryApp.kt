@@ -10,7 +10,6 @@ import coil.decode.VideoFrameDecoder
 import coil.decode.GifDecoder
 import coil.memory.MemoryCache
 import com.fastgallery.app.data.GalleryPreferences
-import com.fastgallery.app.data.StartupPreload
 import com.fastgallery.app.ui.LegacyThumbCache
 import com.fastgallery.app.ui.LegacyThumbFetcher
 import com.fastgallery.app.ui.ThumbData
@@ -28,9 +27,7 @@ import com.fastgallery.app.ui.ThumbKeyer
 class GalleryApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
-        // Cold start: pehle page ki cache + prefs sabse pehle, alag thread par (Coil init ke peeche na rukein).
-        if (hasMediaAccess(this)) StartupPreload.start(this)
-        // Prefs file aur ImageLoader background me warm karo, main thread block na ho.
+        // Cold start: prefs file aur ImageLoader background me warm karo, main thread block na ho.
         Thread {
             GalleryPreferences.theme(this)
             Coil.imageLoader(this)

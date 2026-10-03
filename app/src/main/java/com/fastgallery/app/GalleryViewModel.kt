@@ -22,7 +22,6 @@ import com.fastgallery.app.data.MediaFilter
 import com.fastgallery.app.data.MediaItem
 import com.fastgallery.app.data.MediaOperations
 import com.fastgallery.app.data.MediaRepository
-import com.fastgallery.app.data.StartupPreload
 import com.fastgallery.app.data.buildAlbums
 import com.fastgallery.app.data.buildGridModel
 import com.fastgallery.app.data.matchesFilter
@@ -110,7 +109,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
 
     private val resolver = app.contentResolver
     private val repository = MediaRepository(resolver)
-    private val firstPageCache = FirstPageCache.shared(app)
+    private val firstPageCache = FirstPageCache(app)
     private val _state = MutableStateFlow(GalleryState())
     val state: StateFlow<GalleryState> = _state.asStateFlow()
 
@@ -179,9 +178,15 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         if (!hasMediaAccess(app)) return
         viewModelScope.launch {
             val snapshot = withContext(Dispatchers.IO) {
-                // Application.onCreate ne ye kaam pehle hi shuru kar diya hota hai (StartupPreload).
-                val preload = StartupPreload.consume()
-                if (preload != null) runCatching { preload.get() }.getOrNull() else StartupPreload.read(app)
+                val items = firstPageCache.read()?.takeIf { it.isNotEmpty() } ?: return@withContext null
+                CachedFirstPage(
+                    items = items,
+                    favorites = GalleryPreferences.favorites(app),
+                    trashKeys = GalleryPreferences.trashed(app),
+                    trashTimes = GalleryPreferences.trashTimes(app),
+                    hidden = GalleryPreferences.hiddenAlbums(app),
+                    locked = GalleryPreferences.lockedAlbums(app),
+                )
             } ?: return@launch
             // Atomic: asli load pehle aa chuka (loading == false) ya items aa chuke ho to cache skip.
             _state.update { cur ->
@@ -203,6 +208,15 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    private class CachedFirstPage(
+        val items: List<MediaItem>,
+        val favorites: Set<String>,
+        val trashKeys: Set<String>,
+        val trashTimes: Map<String, Long>,
+        val hidden: Set<String>,
+        val locked: Set<String>,
+    )
 
     fun setQuery(query: GalleryQuery) {
         _query.value = query
@@ -244,6 +258,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         )
         pageJob = viewModelScope.launch(Dispatchers.IO) {
             try {
+                purgeExpiredFallbackTrash()
                 coroutineScope {
                     // System trash query pehle page ke saath parallel chalti hai, par usse rukte nahi:
                     // page aate hi publish (tap/open allow), trash baad me.
@@ -272,10 +287,6 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                     lastSuccessfulRefreshMs = SystemClock.elapsedRealtime()
                     refreshPending = false
                     _refreshing.value = false
-
-                    // API < 30 ka purana trash purge: pehle page ke BAAD (pehle ye query se pehle chalta tha
-                    // aur first paint rokta tha). Delete hone par ContentObserver khud refresh karwa deta hai.
-                    purgeExpiredFallbackTrash()
 
                     val systemTrash = trashQuery.await()
                     coroutineContext.ensureActive()

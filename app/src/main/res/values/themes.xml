@@ -2,4 +2,11 @@
     <style name="Theme.Gallery" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
     </style>
+
+    <!-- Cold start: Android 12+ ka system SplashScreen (purane me compat). Activity shuru hote hi Theme.Gallery lag jaati hai. -->
+    <style name="Theme.Gallery.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/ic_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_fg</item>
+        <item name="postSplashScreenTheme">@style/Theme.Gallery</item>
+    </style>
 </resources>
