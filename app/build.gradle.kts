@@ -25,14 +25,14 @@ val hasReleaseKey = listOf(releaseStoreFile, releaseStorePassword, releaseKeyAli
 
 android {
     namespace = "com.fastgallery.app"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.fastgallery.app"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 35
-        versionName = "1.4.29"
+        targetSdk = 36
+        versionCode = 36
+        versionName = "1.4.30"
     }
 
     signingConfigs {

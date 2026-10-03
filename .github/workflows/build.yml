@@ -28,10 +28,10 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Set up Gradle 8.9
+      - name: Set up Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: "8.13"
 
       # Repo Secrets: ANDROID_KEYSTORE_BASE64 (keystore ka base64), ANDROID_KEYSTORE_PASSWORD,
       # ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD. Secrets na hon (jaise fork PR) to release debug key se banta hai.

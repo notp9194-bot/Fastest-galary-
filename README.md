@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.29
+# Fast Gallery 1.4.30
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -24,7 +24,7 @@ Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26
 
 ## Build
 
-Open the `FastGallery` directory in Android Studio or use Gradle 8.9 with JDK 17:
+Open the `FastGallery` directory in Android Studio or use Gradle 8.13 with JDK 17:
 
 ```sh
 gradle assembleDebug
@@ -44,6 +44,21 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 2. Local: `keystore.properties.example` ko `keystore.properties` me copy karke values bharo, phir `gradle assembleRelease` ya `gradle bundleRelease` (Play Store ke liye AAB). `keystore.properties` aur `*.keystore` git me ignore hain.
 3. GitHub Actions: repo Secrets me `ANDROID_KEYSTORE_BASE64` (`base64 -w0 release.keystore`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` daalo. `v*` tag build bina keystore secret ke fail hota hai.
 4. Note: debug key se pehle install ki hui APK ke upar apni keystore wali APK install nahi hogi (signature alag) - uninstall karke install karo.
+
+## Play Store release files (1.4.30 ke baad)
+
+- `docs/privacy-policy.html` (+ `play-store/PRIVACY_POLICY.md`): privacy policy. GitHub Pages se `/docs` host karo. `[DEVELOPER NAME]` aur `[CONTACT EMAIL]` bharna baaki hai.
+- `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
+- `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
+
+## Updates in 1.4.30
+
+- **Play Store target API**: Google Play ab naye apps/updates ke liye Android 16 (API 36) maangta hai. `compileSdk` aur `targetSdk` 35 -> **36** (app + baselineprofile module).
+- Build tooling (API 36 ke liye zaroori): Android Gradle Plugin 8.7.0 -> **8.11.1** (API 36 supported, Gradle 8.13 chahiye), Gradle 8.9 -> **8.13** (CI workflow + README), `androidx.baselineprofile` plugin aur `benchmark-macro-junit4` 1.3.3 -> **1.4.1**. Kotlin 2.0.20 aur Compose BOM jaise ke taise (build warning aa sakti hai ki AGP Kotlin plugin se naya hai; error nahi).
+- Android 16 behaviour changes check kiye: `onBackPressed` / `KEYCODE_BACK` use nahi hota (Compose `BackHandler` + `enableOnBackInvokedCallback`), screen orientation lock ya `resizeableActivity=false` nahi hai, edge-to-edge pehle se on (`enableEdgeToEdge`). Code change zaroori nahi mila, par real Android 16 device/emulator par test zaroori hai.
+- Version: `versionName` 1.4.30 / `versionCode` 36.
+
+Build yahan nahi chala (Gradle/SDK nahi). Tool versions docs se liye gaye hain; CI chalake dekhna.
 
 ## Updates in 1.4.29
 
