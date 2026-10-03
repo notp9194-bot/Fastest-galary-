@@ -1,6 +1,8 @@
 package com.fastgallery.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import android.app.ActivityManager
+import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -76,6 +78,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import coil.compose.AsyncImage
+import coil.imageLoader
+import com.fastgallery.app.data.Album
+import com.fastgallery.app.data.GalleryPreferences
 import com.fastgallery.app.data.ImageEdit
 import com.fastgallery.app.data.MediaItem
 import com.fastgallery.app.data.MediaOperations
@@ -117,7 +122,9 @@ fun Viewer(
     onSetTrashed: (MediaItem, Boolean) -> Unit,
     onDelete: (MediaItem) -> Unit,
     onRename: (MediaItem, String) -> Unit,
-    onCopyOrMove: (MediaItem, String, Boolean) -> Unit,
+    onCopyOrMove: (MediaItem, String, Boolean, String?) -> Unit,
+    /** Copy/move picker me dikhne wale albums (hidden/locked hata ke). Khali ho to sirf "New album" dikhega. */
+    albums: List<Album> = emptyList(),
     onWallpaper: (MediaItem) -> Unit,
     onEdit: (MediaItem, ImageEdit) -> Unit,
     /** Grid me tap hui thumbnail ki window-bounds + uska index: open/close transition isi se chalta hai. */
@@ -137,8 +144,6 @@ fun Viewer(
     var copyTarget by remember { mutableStateOf<MediaItem?>(null) }
     var editTarget by remember { mutableStateOf<MediaItem?>(null) }
     var renameText by remember { mutableStateOf("") }
-    var folderText by remember { mutableStateOf("") }
-    var moveAfterCopy by remember { mutableStateOf(false) }
     var moreMenu by remember { mutableStateOf(false) }
 
     // System bars: open animation ke baad chhupte hain, close animation SHURU hote hi wapas aate hain.
@@ -149,22 +154,44 @@ fun Viewer(
     DisposableEffect(barsController) {
         barsController?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         // Viewer kisi aur raaste se bhi hat sake (jaise list khali) to bars wapas aa jayen.
-        onDispose { barsController?.show(WindowInsetsCompat.Type.systemBars()) }
+        onDispose {
+            barsController?.show(WindowInsetsCompat.Type.systemBars())
+            // Video me swipe se badli brightness Viewer band hote hi wapas (system/auto).
+            VideoBrightness.restore(ctx.findActivity())
+        }
     }
     LaunchedEffect(slideshow, items.size) {
         while (slideshow && items.isNotEmpty()) {
-            delay(2800)
+            delay(GalleryPreferences.slideshowDelayMs(ctx).toLong())
             pager.animateScrollToPage((pager.currentPage + 1) % items.size)
         }
     }
     LaunchedEffect(pager.currentPage, items.size) {
         if (items.isNotEmpty() && pager.currentPage >= items.size - 3) loadMore()
     }
+    // Neighbour preload: low-RAM device pe band (wahan purana behaviour: neighbours 512 px).
+    val preloadFull = remember(ctx) {
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        am?.isLowRamDevice != true
+    }
 
     // Open/close transition: thumbnail ki jagah se full screen tak (aur wapas). enter 0 = thumbnail, 1 = full.
     val enter = remember { Animatable(if (origin != null) 0f else 1f) }
     var closing by remember { mutableStateOf(false) }
     var rootSize by remember { mutableStateOf(IntSize.Zero) }
+    // Ruk jaane (settled) ke baad agli aur pichhli photo ko full size me memory cache me daal do. Swipe pe wo
+    // page cache-hit se turant sharp dikhta hai (pehle neighbours 512 px pe aate the aur fir full decode hota tha).
+    // Fling ke dauran settledPage nahi badalta, isliye beech ki photos ke liye faltu decode nahi chalte.
+    LaunchedEffect(pager.settledPage, rootSize, items.size, preloadFull) {
+        if (!preloadFull || rootSize.width <= 0 || rootSize.height <= 0) return@LaunchedEffect
+        val size = viewerDecodeSize(rootSize.width, rootSize.height)
+        val loader = ctx.imageLoader
+        for (index in intArrayOf(pager.settledPage + 1, pager.settledPage - 1)) {
+            val neighbour = items.getOrNull(index) ?: continue
+            if (neighbour.isVideo) continue
+            loader.enqueue(viewerImageRequest(ctx, neighbour.uri, size))
+        }
+    }
     LaunchedEffect(Unit) {
         if (enter.value < 1f) enter.animateTo(1f, tween(300, easing = FastOutSlowInEasing))
         if (!closing) barsController?.hide(WindowInsetsCompat.Type.systemBars())
@@ -235,6 +262,10 @@ fun Viewer(
             ViewerPage(
                 item = items[page],
                 isCurrent = page == pager.currentPage,
+                fullSizeAlways = preloadFull,
+                // Jis thumbnail se viewer khula uski grid-size entry memory cache me hai: placeholder turant aayega.
+                thumbSizePx = if (page == originIndex && lastGridThumbPx > 0) lastGridThumbPx else 512,
+                useThumbPlaceholder = !readOnly,
                 onTap = { chrome = !chrome },
                 chrome = chrome,
                 onHideChrome = { chrome = false },
@@ -323,8 +354,6 @@ fun Viewer(
                                 text = { Text(stringResource(R.string.action_copy_move)) },
                                 onClick = {
                                     moreMenu = false
-                                    folderText = item.bucketName
-                                    moveAfterCopy = false
                                     copyTarget = item
                                 },
                             )
@@ -396,22 +425,11 @@ fun Viewer(
         )
     }
     copyTarget?.let { item ->
-        AlertDialog(
-            onDismissRequest = { copyTarget = null },
-            title = { Text(stringResource(R.string.copy_title)) },
-            text = {
-                Column {
-                    OutlinedTextField(value = folderText, onValueChange = { folderText = it }, label = { Text(stringResource(R.string.copy_folder_name)) })
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(stringResource(R.string.copy_delete_original))
-                        Switch(checked = moveAfterCopy, onCheckedChange = { moveAfterCopy = it })
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { onCopyOrMove(item, folderText, moveAfterCopy); copyTarget = null }) { Text(stringResource(R.string.action_continue)) }
-            },
-            dismissButton = { TextButton(onClick = { copyTarget = null }) { Text(stringResource(R.string.action_cancel)) } },
+        AlbumPickerSheet(
+            source = item,
+            albums = albums,
+            onDismiss = { copyTarget = null },
+            onPick = { name, path, move -> onCopyOrMove(item, name, move, path); copyTarget = null },
         )
     }
     editTarget?.let { item -> EditDialog(item, onDismiss = { editTarget = null }) { edit ->
@@ -425,6 +443,9 @@ fun Viewer(
 private fun ViewerPage(
     item: MediaItem,
     isCurrent: Boolean,
+    fullSizeAlways: Boolean,
+    thumbSizePx: Int,
+    useThumbPlaceholder: Boolean,
     onTap: () -> Unit,
     chrome: Boolean,
     onHideChrome: () -> Unit,
@@ -439,10 +460,18 @@ private fun ViewerPage(
     var zoomJob by remember(item.key) { mutableStateOf<Job?>(null) }
     val currentOnDismiss by rememberUpdatedState(onDismiss)
     val currentOnSwipeUp by rememberUpdatedState(onSwipeUp)
-    val decodeSize = if (isCurrent) {
-        (maxOf(box.width, box.height) * 1.5f).toInt().coerceIn(512, 2560)
-    } else {
-        512
+    // Video gestures (double-tap seek, long-press 2x, brightness/volume): VideoPlayer apne lambdas yahan register karta hai.
+    val videoGestures = remember(item.key) { VideoGestureHandler() }
+    // Current (ya preload on ho to har) page full size pe; low-RAM pe neighbours halke (512) rehte hain.
+    val decodeSize = if (isCurrent || fullSizeAlways) viewerDecodeSize(box.width, box.height) else 512
+    // Thumbnail placeholder tab tak dikhta hai jab tak full image aakar crossfade na kar le.
+    var showThumb by remember(item.key) { mutableStateOf(useThumbPlaceholder && !item.isVideo) }
+    var fullLoaded by remember(item.key) { mutableStateOf(false) }
+    LaunchedEffect(fullLoaded) {
+        if (fullLoaded) {
+            delay(220) // crossfade (160 ms) poora hone do, tabhi thumb hatao (transparent PNG ke neeche na dikhe)
+            showThumb = false
+        }
     }
     val density = LocalDensity.current
     val closeThreshold = with(density) { 120.dp.toPx() }
@@ -491,27 +520,57 @@ private fun ViewerPage(
         .pointerInput(item.key, scale) {
             if (scale <= 1.01f) {
                 // Neeche kheencho = band; upar kheencho = details sheet. Dono me chhoda to wapas spring.
+                // Video me left/right side-zone ka vertical swipe iski jagah brightness/volume badalta hai
+                // (beech ka zone pehle jaisa: close / details).
+                var adjust: VideoAdjust? = null
                 detectVerticalDragGestures(
+                    onDragStart = { start ->
+                        adjust = if (item.isVideo) adjustZoneAt(start.x, size.width.toFloat()) else null
+                        adjust?.let { videoGestures.adjustStart(it) }
+                    },
                     onVerticalDrag = { change, dragAmount ->
-                        dismissOffset = (dismissOffset + dragAmount)
-                            .coerceIn(-closeThreshold, size.height.toFloat())
+                        val kind = adjust
+                        if (kind != null) {
+                            videoGestures.adjustBy(kind, dragAmount, size.height.toFloat())
+                        } else {
+                            dismissOffset = (dismissOffset + dragAmount)
+                                .coerceIn(-closeThreshold, size.height.toFloat())
+                        }
                         change.consume()
                     },
                     onDragEnd = {
-                        when {
+                        if (adjust != null) {
+                            adjust = null
+                            videoGestures.adjustEnd()
+                        } else when {
                             dismissOffset >= closeThreshold -> currentOnDismiss()
                             dismissOffset <= -swipeUpThreshold -> { currentOnSwipeUp(); settle() }
                             else -> settle()
                         }
                     },
-                    onDragCancel = { settle() },
+                    onDragCancel = {
+                        if (adjust != null) {
+                            adjust = null
+                            videoGestures.adjustEnd()
+                        } else settle()
+                    },
                 )
             }
         }
         .onSizeChanged { box = it }
         .pointerInput(item.key) {
-            detectTapGestures(onTap = { onTap() }, onDoubleTap = { tap ->
-                if (!item.isVideo) {
+            detectTapGestures(
+                // Video: double-tap seek ke turant baad ke single taps bhi seek karte hain; baaki tap chrome toggle.
+                onTap = { tap ->
+                    if (!(item.isVideo && videoGestures.tapAsSeek(tap.x, size.width.toFloat()))) onTap()
+                },
+                // Video me long-press = 2x (chhodte hi band). Photo me long-press pehle jaisa (None) rehta hai.
+                onLongPress = if (item.isVideo) ({ _: Offset -> videoGestures.hold(true) }) else null,
+                onPress = { if (item.isVideo) { tryAwaitRelease(); videoGestures.hold(false) } },
+                onDoubleTap = { tap ->
+                if (item.isVideo) {
+                    videoGestures.doubleTap(tap.x, size.width.toFloat())
+                } else {
                     // Double-tap: tap wali jagah pe smooth zoom-in (2.5x); dobara double-tap pe smooth zoom-out.
                     zoomJob?.cancel()
                     val fromScale = scale
@@ -529,7 +588,8 @@ private fun ViewerPage(
                         }
                     }
                 }
-            })
+            },
+            )
         }
     if (!item.isVideo) modifier = modifier.transformable(transformState, canPan = { scale > 1f })
     Box(modifier.graphicsLayer {
@@ -539,17 +599,33 @@ private fun ViewerPage(
         alpha = 1f - (dismissOffset.coerceAtLeast(0f) / height).coerceIn(0f, 0.65f)
     }) {
         if (item.isVideo) {
-            VideoPlayer(item, isCurrent = isCurrent, controlsVisible = chrome, onHideControls = onHideChrome)
+            VideoPlayer(item, isCurrent = isCurrent, controlsVisible = chrome, onHideControls = onHideChrome, gestures = videoGestures)
         } else {
-            AsyncImage(
-                model = rememberImageRequest(item.uri, decodeSize),
-                contentDescription = item.name,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize().graphicsLayer {
+            Box(
+                Modifier.fillMaxSize().graphicsLayer {
                     scaleX = scale; scaleY = scale
                     translationX = offset.x; translationY = offset.y
                 },
-            )
+            ) {
+                if (showThumb) {
+                    AsyncImage(
+                        model = rememberThumbRequest(item.uri, thumbSizePx),
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                // Page ka size pata hone se pehle full decode shuru nahi karte (pehle 512 px pe ek bekaar decode hota tha).
+                if (box.width > 0 && box.height > 0) {
+                    AsyncImage(
+                        model = rememberViewerRequest(item.uri, decodeSize),
+                        contentDescription = item.name,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                        onSuccess = { fullLoaded = true },
+                    )
+                }
+            }
             if (item.isRaw()) {
                 Text(
                     stringResource(R.string.badge_raw),

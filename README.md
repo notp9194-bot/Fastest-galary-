@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.22
+# Fast Gallery 1.4.27
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -10,7 +10,7 @@ Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26
 - Long-press multi-select with drag-to-select (ungli ghumake ek saath kai items) and bulk share, favorites and trash actions.
 - Rename, copy to another album/folder, or move (copy followed by Android's delete approval).
 - Trash with restore (30-day auto-delete), favorite collection, album hide, and device-authenticated album lock.
-- Full-screen edit screen with live preview: rotate 90°, drag-to-crop (free, 1:1, 4:3, 3:4, 16:9 with movable corners/edges) and Original/Mono/Warm/Cool filters. Edits are saved as a new JPEG; the source is preserved.
+- Full-screen edit screen with live preview: rotate 90°, flip horizontal/vertical, straighten (±45°), drag-to-crop (free, 1:1, 4:3, 3:4, 16:9 with movable corners/edges), brightness/contrast/saturation sliders, Original/Mono/Warm/Cool filters, undo/reset and hold-to-compare (before/after). Edits are saved as a new JPEG; the source is preserved.
 - Set an image as wallpaper and choose System/Light/Dark appearance.
 
 ## Important behavior
@@ -44,6 +44,69 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 2. Local: `keystore.properties.example` ko `keystore.properties` me copy karke values bharo, phir `gradle assembleRelease` ya `gradle bundleRelease` (Play Store ke liye AAB). `keystore.properties` aur `*.keystore` git me ignore hain.
 3. GitHub Actions: repo Secrets me `ANDROID_KEYSTORE_BASE64` (`base64 -w0 release.keystore`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` daalo. `v*` tag build bina keystore secret ke fail hota hai.
 4. Note: debug key se pehle install ki hui APK ke upar apni keystore wali APK install nahi hogi (signature alag) - uninstall karke install karo.
+
+## Updates in 1.4.27
+
+- Tabs: **left/right swipe se tab switch** (`ui/TabSwipe.kt`, `TabSwipeContainer`). Photos, Albums, Favorites, Trash, Settings ke beech content ungli ke saath chalta hai (halka fade). Chhodne par kaafi door (width ka 28%) ya tez flick ho to purana content bahar slide hota hai, naya opposite side se andar aata hai (halka haptic), warna spring se wapas. Pehle tab par daayein aur aakhri par bayein swipe me rubber-band resistance, tab nahi badalta.
+- Gesture conflicts: swipe Main pass me child ke BAAD dekha jata hai, isliye drag-select, pinch zoom, Settings sliders, fast scroller aur vertical scroll pehle apna kaam karte hain. Swipe tabhi lagta hai jab chaal saaf horizontal ho (dx >= dy ka 1.6x) aur kisi ne consume na kiya ho. Screen ke dono kinare (~20dp) system back gesture ke liye chhode gaye hain. RTL me direction ulta.
+- Swipe in sab me band hai: selection mode, search khula, album ke andar, Settings sub-page, viewer, picker mode, permission screen, bulk operation chalte waqt. Bottom bar/rail se tap karke tab badalna pehle jaisa (bina animation).
+- Tab ka nishaan (nav indicator) slide-out ke baad badalta hai, jab tab asal me switch hota hai.
+- Code: faisla `resolveTabSwipe` / `tabSwipeStep` me alag pure functions hain, naya test `TabSwipeTest`. `MainActivity` me `switchTab` ab nav bar/rail wale reset (`albumId`, `settingsPage`, `searchOpen`) ke saath wahi logic use karta hai swipe ke liye. Baseline profile me `TabSwipe` startup path me, generator me swipe journey.
+- Version: `versionName` 1.4.27 / `versionCode` 33.
+
+Build, unit tests aur device checks is update ke liye chalaye nahi gaye (is environment me Gradle/Android SDK nahi tha). Swipe ka feel (thresholds: 28%, 700dp/s flick, 150/260 ms) device par try karke tune karna.
+
+## Updates in 1.4.26
+
+- Baseline profile: `app/src/main/baseline-prof.txt` ab 270-byte ka "poora app hot" starter nahi, balki **hand-curated** profile hai. Startup path (GalleryApp, MainActivity, ViewModel, repository, preferences, grid, thumbnails, FastScroller, SelectionBar) `HSP` hai; baad me khulne wale Viewer, VideoPlayer, AlbumPicker, EditDialog, Pip, MediaOperations `HP` hain. Isse install par ART sirf kaam ke code ko compile karta hai.
+- **Ye measured profile nahi hai.** Device/emulator (API 28+) par `./gradlew :app:generateBaselineProfile` chalao, `app/src/main/generated/baselineProfiles/` commit karo, phir `baseline-prof.txt` hata do.
+- `BaselineProfileGenerator` theek kiya: sort button ab `By.desc("Sort and filter")` se milta hai (pehle `By.text("Sort")` kabhi match nahi hota tha, isliye filter wala path record hi nahi hota tha). Naye journeys: select mode (long-press + Select all), video open, All media wapas, Settings/Albums scroll, viewer pager swipe + double-tap zoom, editor tabs, Copy/move album picker, swipe-down close. Har step null-safe hai.
+- Generate karte waqt gallery me kam se kam ek video aur kai photos hone chahiye.
+- Version: `versionName` 1.4.26 / `versionCode` 32.
+
+### Pehle ke changes jo README me likhe nahi the (ab code ke hisaab se documented)
+
+- Copy/move: **album picker** (`ui/AlbumPicker.kt`). Folder ka naam type karne ki jagah bottom sheet me existing albums (cover, naam, item count). Sabse upar "New album" (naam type karke naya folder banta hai). "Delete original" switch on ho to copy ki jagah move hota hai; move me current album disabled rehta hai.
+- Bulk operations: **progress card** (`ui/BulkProgress.kt`). Delete me "Deleting X of Y" bar, copy/move me bar (size pata na ho to indeterminate) aur Cancel. Chhote kaam me flash na ho isliye card 350 ms baad dikhta hai. Cancel flag background loop padhta hai, aur copy cancel hone par alag message aata hai.
+- Grid badges: favorite ke liye chhota **heart** (thumbnail par), **GIF** aur **RAW** ka label video-duration wale corner me (video par dono nahi aate). TalkBack me favorite state bhi bola jata hai.
+- Date header: header tap karne par us din ki **sab photos select / deselect** (selection mode me header par check circle dikhta hai).
+- Settings: Default sort, slideshow speed, video autoplay, video muted default, haptic feedback on/off, Trash info (kitne din baad auto-delete) aur "Open Trash". Haptics off ho to poori app me vibration band (`HapticsGate`). Naye prefs `GalleryPreferences` me: `videoAutoplay`, `videoMuted`, `hapticsEnabled`, `slideshowDelayMs`.
+- Errors: **friendly messages** (`ui/Feedback.kt`, `friendlyError`). Failure par raw `it.message` nahi dikhta; permission, file nahi mili, storage full, file bahut badi, format unsupported ya generic line aati hai (`err_*` strings, en + hi). Asli exception sirf Logcat me jaata hai. Toasts ki jagah ek hi snackbar host (MainActivity aur Viewer dono ke upar).
+
+Build aur device run is update ke liye nahi kiye gaye (is environment me Gradle/Android SDK aur device nahi tha).
+
+## Updates in 1.4.25
+
+- Editor: **tabs**. Neeche Crop / Adjust / Filters tabs. Crop tab me rotate, flip, aspect chips aur straighten slider; Adjust tab me brightness, contrast, saturation sliders; Filters tab me purane 4 filters.
+- Editor: **flip**. "Flip horizontal" / "Flip vertical" ek tap me dikhne wali image palat dete hain (toggle nahi, action). Crop box bhi saath me mirror hota hai. Flip rotate ke BAAD lagta hai; rotate karne par H/V flags swap hote hain taaki dikhne wali image na badle.
+- Editor: **straighten** (-45° se +45°, 0.1° steps, 0 ke paas magnet). Image frame ke andar ghoomti hai aur itna zoom hoti hai ki kone khali na dikhen (`MediaOperations.straightenCoverScale`, preview aur saved copy dono me wahi). Crop straighten ke BAAD wale frame par hota hai.
+- Editor: **brightness / contrast / saturation** sliders (-100..100, 0 ke paas magnet). Saved copy me order: saturation -> contrast -> brightness -> filter (`MediaOperations.colorMatrix`, preview ka ColorFilter bhi yahi matrix use karta hai, isliye jo dikhta hai wahi save hota hai).
+- Editor: **undo / reset**. Upar undo icon (50 steps tak), tabs ke saath Reset (reset khud bhi undo ho sakta hai). Slider ya crop-box ka poora drag ek hi step hai.
+- Editor: **before/after compare**. Preview ke neeche "Hold to compare" dabaye rakho to original image dikhti hai (crop box ke bina), chhodte hi edit wapas.
+- Order (preview aur saved copy dono): EXIF -> rotate -> flip -> straighten -> crop -> colour sliders -> filter.
+- Code: `EditDialog.kt` me `EditorState` (undo ka snapshot), `EditSlider`, `CompareButton`; `ImageEdit` me naye fields (`flipHorizontal`, `flipVertical`, `straightenDegrees`, `brightness`, `contrast`, `saturation`, sab ke defaults "koi badlav nahi"). Naye strings (en + hi): `edit_tab_*`, `edit_flip_*`, `edit_straighten`, `edit_brightness`, `edit_contrast`, `edit_saturation`, `edit_undo`, `edit_reset`, `edit_compare*`. Naya test: `EditMathTest`.
+- Version: `versionName` 1.4.25 / `versionCode` 31.
+
+Build, unit tests aur device checks is source update ke liye chalaye nahi gaye (is environment me Gradle/Android SDK nahi tha). Sirf colour-matrix aur straighten ka math alag se verify kiya gaya.
+
+## Updates in 1.4.24
+
+- Video: **double-tap seek**. Left third pe double-tap = -10 s, right third = +10 s, beech me = play/pause. Seek ke turant baad (0.7 s ke andar) ke single taps bhi seek karte rehte hain (chrome toggle nahi), aur HUD me jama seconds dikhte hain (+10 s, +20 s ...).
+- Video: **long-press = 2x speed**. Chalte video me ungli rakhe rehne tak 2x (haptic + "2x speed" chip), chhodte hi pichhli speed. Ruke hue video me long-press kuch nahi karta. Photo me long-press pehle jaisa.
+- Video: **brightness / volume swipe**. Left side me vertical swipe = brightness (sirf is window ki, system setting nahi chhedta, Viewer band hote hi wapas), right side me = volume (STREAM_MUSIC, system volume UI ke bina). Poori range ~70% screen-height ki swipe. HUD me icon + bar + %. Beech ka zone pehle jaisa: neeche = close, upar = details. Zone ki chaudai `SIDE_ZONE_FRACTION` (0.33) se badlo.
+- Code: `VideoGestureHandler` (`ui/VideoPlayer.kt`) Viewer ke gestures aur VideoPlayer ke beech pul hai; `VideoBrightness` window brightness yaad/restore karta hai. Naye strings (en + hi): `video_seek_*_hud`, `video_hold_speed_hud`, `video_hud_*`.
+- Version: `versionName` 1.4.24 / `versionCode` 30.
+
+Build aur device checks is source update ke liye chalaye nahi gaye.
+
+## Updates in 1.4.23
+
+- Viewer: **photo khulte hi blank/blurry flash nahi**. Full-size decode aane tak neeche ek thumbnail placeholder dikhta hai (jis photo se viewer khula uski grid-size thumbnail memory cache se turant aati hai), phir full photo 160 ms crossfade se uske upar aati hai. Crossfade sirf viewer ki request me hai (`viewerImageRequest`); grid ka `ImageLoader` `crossfade(false)` hi hai. Memory-cache hit pe Coil crossfade khud skip karta hai. Page ka size pata hone se pehle full decode shuru nahi hota (pehle 512 px pe ek bekaar decode hota tha). "Open with" (`ViewActivity`, readOnly) me placeholder nahi (bahar ki URI ka MediaStore thumbnail nahi hota).
+- Viewer: **swipe pe agli photo sharp aati hai**. Pager ruk jaane (`settledPage`) ke baad agli aur pichhli photo (video chhodke) full size me `imageLoader.enqueue` se memory cache me preload hoti hai, aur neighbour pages bhi ab current wale size pe decode hote hain (pehle 512 px). Display aur prefetch ki request same helper se banti hai (data/size/scale same) taaki cache key match kare. Low-RAM device pe preload band hai (purana behaviour: neighbours 512 px).
+- Code: `viewerDecodeSize`, `viewerImageRequest`, `rememberViewerRequest` (`ui/Components.kt`); `lastGridThumbPx` hint (`ui/Screens.kt`) viewer ko grid ka thumbnail size batata hai.
+- Version: `versionName` 1.4.23 / `versionCode` 29.
+
+Build aur device checks is source update ke liye chalaye nahi gaye.
 
 ## Updates in 1.4.22
 

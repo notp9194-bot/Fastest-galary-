@@ -96,11 +96,13 @@ enum class MediaFilter { ALL, PHOTOS, VIDEOS, GIFS, RAW }
 
 fun MediaItem.matchesFilter(filter: MediaFilter): Boolean = when (filter) {
     MediaFilter.ALL -> true
-    MediaFilter.PHOTOS -> !isVideo && !mime.contains("gif", true) && !isRaw()
+    MediaFilter.PHOTOS -> !isVideo && !isGif() && !isRaw()
     MediaFilter.VIDEOS -> isVideo
-    MediaFilter.GIFS -> mime.contains("gif", true)
+    MediaFilter.GIFS -> isGif()
     MediaFilter.RAW -> isRaw()
 }
+
+fun MediaItem.isGif(): Boolean = mime.contains("gif", true)
 
 fun MediaItem.isRaw(): Boolean =
     mime.contains("dng", true) || mime.contains("raw", true) ||

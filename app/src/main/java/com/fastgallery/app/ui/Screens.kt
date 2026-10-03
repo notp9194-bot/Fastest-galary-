@@ -73,8 +73,16 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import com.fastgallery.app.data.GalleryPreferences
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Modifier
@@ -190,12 +198,18 @@ fun RefreshableBox(
     ) { content() }
 }
 
+/** Grid ne aakhri baar thumbnails kis px size pe decode kiye (0 = abhi pata nahi). Viewer open-placeholder ke liye. */
+@Volatile
+internal var lastGridThumbPx: Int = 0
+
 @Composable
 fun MediaGrid(
     items: List<MediaItem>,
     padding: PaddingValues,
     selected: Set<String>,
     columns: Int,
+    /** Favorite items ke keys: grid me heart badge. */
+    favoriteKeys: Set<String> = emptySet(),
     flingFriction: Float = 0.015f,
     contentVersion: Long,
     resetKey: Any = Unit,
@@ -209,12 +223,41 @@ fun MediaGrid(
     onLoadMore: () -> Unit,
     /** Scrubber pakadte hi: poori library load karwane ke liye (taaki handle poore range me chale). */
     onScrubStart: () -> Unit = {},
+    /** false = picker (single) mode: date header tap se selection nahi hota. */
+    daySelectEnabled: Boolean = true,
 ) {
     val entries = remember(contentVersion) { com.fastgallery.app.data.buildEntries(items) }
+    // Header key -> us header ke neeche ke media keys (agle header tak). Date sort me ek din, Name/Size sort me ek run.
+    val dayGroups = remember(entries) {
+        val map = HashMap<Any, List<String>>()
+        var headerKey: Any? = null
+        var current = ArrayList<String>()
+        for (e in entries) {
+            when (e) {
+                is GridEntry.Header -> {
+                    headerKey?.let { map[it] = current }
+                    headerKey = e.key
+                    current = ArrayList()
+                }
+                is GridEntry.Media -> current.add(e.item.key)
+            }
+        }
+        headerKey?.let { map[it] = current }
+        map
+    }
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val currentSelected by rememberUpdatedState(selected)
+    val toggleDay: (Any) -> Unit = { headerKey ->
+        val keys = dayGroups[headerKey].orEmpty()
+        if (keys.isNotEmpty()) {
+            val base = currentSelected
+            val all = keys.all { it in base }
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onSetSelection(if (all) base - keys.toSet() else base + keys)
+        }
+    }
     val currentEntries by rememberUpdatedState(entries)
     val setSelection by rememberUpdatedState(onSetSelection)
     val currentColumns by rememberUpdatedState(columns)
@@ -229,6 +272,8 @@ fun MediaGrid(
         val cols = gridColumns
         ((screenWidthDp - 2f * (cols - 1)) / cols * density.density).toInt().coerceIn(64, 1024)
     }
+    // Viewer ki placeholder thumbnail isi size se mangti hai => grid ki memory-cache entry hit hoti hai.
+    SideEffect { lastGridThumbPx = thumbPx }
     // Live pinch: ungliyon ke saath grid smoothly scale hota hai; scale limit paar hote hi columns badalte hain
     // aur scale ko compensate kar dete hain (cell ka size continuous rehta hai). Chhodne par scale 1 pe settle.
     var pinchScale by remember { mutableFloatStateOf(1f) }
@@ -460,12 +505,23 @@ fun MediaGrid(
             ) { entry ->
                 val itemModifier = if (animateItems) Modifier.animateItem() else Modifier
                 when (entry) {
-                    is GridEntry.Header -> DateHeaderText(entry.label, itemModifier)
+                    is GridEntry.Header -> {
+                        val keys = dayGroups[entry.key].orEmpty()
+                        DateHeaderText(
+                            entry.label,
+                            itemModifier,
+                            selectable = daySelectEnabled && keys.isNotEmpty(),
+                            selectionMode = selected.isNotEmpty(),
+                            allSelected = keys.isNotEmpty() && keys.all { it in selected },
+                            onToggle = { toggleDay(entry.key) },
+                        )
+                    }
                     is GridEntry.Media -> Thumb(
                         entry.item,
                         modifier = itemModifier,
                         sizePx = thumbPx,
                         selected = entry.item.key in selected,
+                        favorite = entry.item.key in favoriteKeys,
                         onClick = {
                             if (selected.isNotEmpty()) onToggleSelection(entry.item)
                             else {
@@ -498,6 +554,8 @@ fun MediaGrid(
                     .then(if (stickyHeightPx > 0) Modifier.height(stickyHeight) else Modifier)
                     .clipToBounds(),
             ) {
+                val stickyKey = (entries.getOrNull(stickyHeaderIndex) as? GridEntry.Header)?.key
+                val stickyKeys = stickyKey?.let { dayGroups[it] }.orEmpty()
                 DateHeaderText(
                     stickyLabel,
                     Modifier
@@ -505,6 +563,10 @@ fun MediaGrid(
                         .onSizeChanged { if (it.height != stickyHeightPx) stickyHeightPx = it.height }
                         .graphicsLayer { translationY = stickyPush.toFloat() }
                         .background(MaterialTheme.colorScheme.background),
+                    selectable = daySelectEnabled && stickyKeys.isNotEmpty(),
+                    selectionMode = selected.isNotEmpty(),
+                    allSelected = stickyKeys.isNotEmpty() && stickyKeys.all { it in selected },
+                    onToggle = { stickyKey?.let(toggleDay) },
                 )
             }
         }
@@ -521,14 +583,53 @@ fun MediaGrid(
 }
 
 
-/** Grid ka date header; sticky overlay bhi yehi use karta hai taaki dono ki height/style bilkul barabar rahe. */
+/**
+ * Grid ka date header; sticky overlay bhi yehi use karta hai taaki dono ki height/style bilkul barabar rahe.
+ * selectable: header tap se us din ki sab photos select/deselect. Selection mode me end pe circle dikhta hai
+ * (jagah hamesha reserve rehti hai, isliye header ki height selection ke saath nahi badalti).
+ */
 @Composable
-private fun DateHeaderText(label: String, modifier: Modifier = Modifier) {
-    Text(
-        label,
-        style = MaterialTheme.typography.titleSmall,
-        modifier = modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-    )
+private fun DateHeaderText(
+    label: String,
+    modifier: Modifier = Modifier,
+    selectable: Boolean = false,
+    selectionMode: Boolean = false,
+    allSelected: Boolean = false,
+    onToggle: () -> Unit = {},
+) {
+    val clickLabel = stringResource(if (allSelected) R.string.header_deselect_day else R.string.header_select_day)
+    Row(
+        modifier
+            .then(if (selectable) Modifier.clickable(onClickLabel = clickLabel, onClick = onToggle) else Modifier)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.weight(1f),
+        )
+        if (selectable) {
+            Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
+                if (selectionMode) {
+                    if (allSelected) {
+                        Icon(
+                            Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    } else {
+                        Box(
+                            Modifier
+                                .size(20.dp)
+                                .border(2.dp, MaterialTheme.colorScheme.outline, CircleShape),
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -695,6 +796,7 @@ fun PermissionScreen(padding: PaddingValues, onAllow: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     padding: PaddingValues,
@@ -702,6 +804,18 @@ fun SettingsScreen(
     columns: Int,
     hiddenCount: Int,
     lockedCount: Int,
+    sort: GallerySort,
+    onSort: (GallerySort) -> Unit,
+    slideshowMs: Int,
+    onSlideshowMs: (Int) -> Unit,
+    videoAutoplay: Boolean,
+    onVideoAutoplay: (Boolean) -> Unit,
+    videoMuted: Boolean,
+    onVideoMuted: (Boolean) -> Unit,
+    haptics: Boolean,
+    onHaptics: (Boolean) -> Unit,
+    trashCount: Int,
+    onOpenTrash: () -> Unit,
     onTheme: (String) -> Unit,
     onColumns: (Int) -> Unit,
     onOpenHidden: () -> Unit,
@@ -743,6 +857,53 @@ fun SettingsScreen(
         }
         item {
             HorizontalDivider()
+            Text(stringResource(R.string.settings_default_sort), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                listOf(
+                    GallerySort.DATE_NEWEST to R.string.sort_newest,
+                    GallerySort.DATE_OLDEST to R.string.sort_oldest,
+                    GallerySort.NAME to R.string.sort_name,
+                    GallerySort.SIZE_LARGEST to R.string.sort_largest,
+                ).forEach { (value, labelRes) ->
+                    FilterChip(selected = sort == value, onClick = { onSort(value) }, label = { Text(stringResource(labelRes)) })
+                }
+            }
+        }
+        item {
+            HorizontalDivider()
+            Text(stringResource(R.string.settings_slideshow_speed), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                listOf(2000, 3000, 5000, 8000).forEach { ms ->
+                    FilterChip(
+                        selected = slideshowMs == ms,
+                        onClick = { onSlideshowMs(ms) },
+                        label = { Text(stringResource(R.string.settings_seconds, (ms / 1000).toString())) },
+                    )
+                }
+            }
+        }
+        item {
+            HorizontalDivider()
+            Text(stringResource(R.string.settings_video), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+            SettingSwitchRow(stringResource(R.string.settings_video_autoplay), videoAutoplay, onVideoAutoplay)
+            SettingSwitchRow(stringResource(R.string.settings_video_muted), videoMuted, onVideoMuted)
+        }
+        item {
+            HorizontalDivider()
+            SettingSwitchRow(stringResource(R.string.settings_haptics), haptics, onHaptics)
+        }
+        item {
+            HorizontalDivider()
+            Text(stringResource(R.string.nav_trash), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+            Text(
+                stringResource(R.string.settings_trash_hint, (GalleryPreferences.TRASH_RETENTION_MS / 86_400_000L).toInt()),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        item { SummaryRow(stringResource(R.string.settings_trash_open), trashCount, onOpenTrash) }
+        item {
+            HorizontalDivider()
             Text(stringResource(R.string.settings_private_albums), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
             Text(
                 stringResource(R.string.settings_private_hint),
@@ -752,6 +913,21 @@ fun SettingsScreen(
         }
         item { SummaryRow(stringResource(R.string.hidden_albums), hiddenCount, onOpenHidden) }
         item { SummaryRow(stringResource(R.string.locked_albums), lockedCount, onOpenLocked) }
+    }
+}
+
+@Composable
+private fun SettingSwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onChange(!checked) }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 

@@ -1,4 +1,57 @@
-# Starter profile: app ka poora code hot/startup/post-startup mark (generate chalane tak kaam chalata hai).
-# Asli, measured profile ke liye: ./gradlew :app:generateBaselineProfile (baselineprofile module).
-HSPLcom/fastgallery/app/**;->**(**)**
+# Fast Gallery - hand-curated baseline profile (1.4.27).
+#
+# NOTE: Ye MEASURED profile nahi hai. Ye app ke asli classes se banaya gaya hai (startup path vs. baad me
+# khulne wali screens alag). Device/emulator (API 28+) milte hi asli profile generate karo:
+#     ./gradlew :app:generateBaselineProfile
+# Wo app/src/main/generated/baselineProfiles/ me save hota hai -> commit karo, phir ye file DELETE kar do
+# (dono merge hote hain, par measured wala hi sahi hota hai).
+#
+# Flags: H = hot, S = startup, P = post-startup.
+
+# --- Startup path: process start -> splash -> permission/first grid frame ---
+HSPLcom/fastgallery/app/GalleryApp;->**(**)**
+HSPLcom/fastgallery/app/MainActivity**;->**(**)**
+HSPLcom/fastgallery/app/GalleryViewModel**;->**(**)**
+HSPLcom/fastgallery/app/Permissions**;->**(**)**
+HSPLcom/fastgallery/app/data/GalleryPreferences**;->**(**)**
+HSPLcom/fastgallery/app/data/MediaRepository**;->**(**)**
+HSPLcom/fastgallery/app/data/Models**;->**(**)**
+HSPLcom/fastgallery/app/data/MediaItem**;->**(**)**
+HSPLcom/fastgallery/app/data/Album**;->**(**)**
+HSPLcom/fastgallery/app/data/GridEntry**;->**(**)**
+HSPLcom/fastgallery/app/data/MediaPage**;->**(**)**
+HSPLcom/fastgallery/app/ui/GalleryThemeKt**;->**(**)**
+HSPLcom/fastgallery/app/ui/Theme**;->**(**)**
+HSPLcom/fastgallery/app/ui/Haptics**;->**(**)**
+HSPLcom/fastgallery/app/ui/TabSwipe**;->**(**)**
+HSPLcom/fastgallery/app/ui/Feedback**;->**(**)**
+
+# --- Grid, thumbnails, scrolling (pehle frame se hi use hote hain) ---
+HSPLcom/fastgallery/app/ui/Components**;->**(**)**
+HSPLcom/fastgallery/app/ui/ComposableSingletons$ComponentsKt**;->**(**)**
+HSPLcom/fastgallery/app/ui/Thumb**;->**(**)**
+HSPLcom/fastgallery/app/ui/Screens**;->**(**)**
+HSPLcom/fastgallery/app/ui/ComposableSingletons$ScreensKt**;->**(**)**
+HSPLcom/fastgallery/app/ui/FastScroller**;->**(**)**
+HSPLcom/fastgallery/app/ui/SelectionBar**;->**(**)**
+HSPLcom/fastgallery/app/ui/BulkProgress**;->**(**)**
+
+# --- Baad me khulne wale: viewer, video, album picker, editor, PiP ---
+HPLcom/fastgallery/app/ViewActivity**;->**(**)**
+HPLcom/fastgallery/app/PickRequest**;->**(**)**
+HPLcom/fastgallery/app/ui/Viewer**;->**(**)**
+HPLcom/fastgallery/app/ui/ComposableSingletons$ViewerKt**;->**(**)**
+HPLcom/fastgallery/app/ui/VideoPlayer**;->**(**)**
+HPLcom/fastgallery/app/ui/VideoGestureHandler**;->**(**)**
+HPLcom/fastgallery/app/ui/VideoBrightness**;->**(**)**
+HPLcom/fastgallery/app/ui/Pip**;->**(**)**
+HPLcom/fastgallery/app/ui/PipController**;->**(**)**
+HPLcom/fastgallery/app/ui/AlbumPicker**;->**(**)**
+HPLcom/fastgallery/app/ui/EditDialog**;->**(**)**
+HPLcom/fastgallery/app/ui/ComposableSingletons$EditDialogKt**;->**(**)**
+HPLcom/fastgallery/app/data/MediaOperations**;->**(**)**
+HPLcom/fastgallery/app/data/CropRect**;->**(**)**
+HPLcom/fastgallery/app/data/ImageEdit**;->**(**)**
+
+# --- Classes preload (verification/class-load se bachne ke liye) ---
 Lcom/fastgallery/app/**;

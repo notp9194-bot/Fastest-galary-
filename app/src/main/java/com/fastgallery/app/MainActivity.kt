@@ -4,7 +4,6 @@ import android.app.Activity
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -114,6 +113,7 @@ import com.fastgallery.app.data.GallerySort
 import com.fastgallery.app.data.MediaFilter
 import com.fastgallery.app.data.MediaItem
 import com.fastgallery.app.data.MediaOperations
+import com.fastgallery.app.data.buildAlbums
 import com.fastgallery.app.data.sortAlbums
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -129,6 +129,11 @@ import com.fastgallery.app.ui.PermissionScreen
 import com.fastgallery.app.ui.SettingsScreen
 import com.fastgallery.app.ui.SortIcon
 import com.fastgallery.app.ui.Viewer
+import com.fastgallery.app.ui.BulkProgress
+import com.fastgallery.app.ui.HapticsGate
+import com.fastgallery.app.ui.TabSwipeContainer
+import com.fastgallery.app.ui.friendlyError
+import com.fastgallery.app.ui.BulkProgressBar
 import com.fastgallery.app.ui.shareItems
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -166,11 +171,19 @@ class MainActivity : FragmentActivity() {
 fun GalleryRoot(vm: GalleryViewModel = viewModel()) {
     val ctx = LocalContext.current
     var theme by remember { mutableStateOf(GalleryPreferences.theme(ctx)) }
+    var haptics by remember { mutableStateOf(GalleryPreferences.hapticsEnabled(ctx)) }
     GalleryTheme(theme) {
-        GalleryContent(vm, theme) {
-            GalleryPreferences.setTheme(ctx, it)
-            theme = it
-            ctx.findActivity()?.recreate()
+        HapticsGate(haptics) {
+            GalleryContent(
+                vm, theme,
+                onTheme = {
+                    GalleryPreferences.setTheme(ctx, it)
+                    theme = it
+                    ctx.findActivity()?.recreate()
+                },
+                haptics = haptics,
+                onHaptics = { haptics = it; GalleryPreferences.setHapticsEnabled(ctx, it) },
+            )
         }
     }
 }
@@ -209,6 +222,8 @@ private fun GalleryContent(
     vm: GalleryViewModel,
     theme: String,
     onTheme: (String) -> Unit,
+    haptics: Boolean,
+    onHaptics: (Boolean) -> Unit,
 ) {
     val ctx = LocalContext.current
     // Doosre app ne picker ki tarah kholi ho (GET_CONTENT / PICK) to non-null.
@@ -236,6 +251,18 @@ private fun GalleryContent(
     )
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    // Toast ki jagah: ek hi snackbar host (Scaffold / Viewer ke upar), naya message purane ko hata deta hai.
+    // long = true: error / lamba message, dismiss button ke saath.
+    fun notify(message: String, long: Boolean = false) {
+        snackbarHostState.currentSnackbarData?.dismiss()
+        scope.launch {
+            snackbarHostState.showSnackbar(
+                message = message,
+                withDismissAction = long,
+                duration = if (long) SnackbarDuration.Long else SnackbarDuration.Short,
+            )
+        }
+    }
     var granted by remember { mutableStateOf(hasMediaAccess(ctx)) }
     var partialAccess by remember { mutableStateOf(isPartialMediaAccess(ctx)) }
     var partialBannerDismissed by rememberSaveable { mutableStateOf(false) }
@@ -283,10 +310,16 @@ private fun GalleryContent(
     LaunchedEffect(sort) { GalleryPreferences.setSort(ctx, sort) }
     LaunchedEffect(filter) { if (pick == null) GalleryPreferences.setFilter(ctx, filter) }
     var columns by rememberSaveable { mutableIntStateOf(GalleryPreferences.columns(ctx)) }
+    var slideshowMs by remember { mutableIntStateOf(GalleryPreferences.slideshowDelayMs(ctx)) }
+    var videoAutoplay by remember { mutableStateOf(GalleryPreferences.videoAutoplay(ctx)) }
+    var videoMuted by remember { mutableStateOf(GalleryPreferences.videoMuted(ctx)) }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val tick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var approvalAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    // Bulk delete/copy ka progress. Cancel flag background loop padhta hai (coroutine cancel nahi: cleanup Main pe chahiye).
+    var bulk by remember { mutableStateOf<BulkProgress?>(null) }
+    val bulkCancel = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
     // Locked album bina authentication ke kabhi khula na rahe (process restore / relock ke baad bhi).
     val openAlbumLockedOut = albumId?.let { id ->
         id.toString() in state.lockedAlbumIds && vm.unlockedAlbumId != id
@@ -336,7 +369,7 @@ private fun GalleryContent(
         val action = approvalAction
         approvalAction = null
         if (result.resultCode == Activity.RESULT_OK) action?.invoke()
-        else Toast.makeText(ctx, ctx.getString(R.string.msg_approval_denied), Toast.LENGTH_SHORT).show()
+        else notify(ctx.getString(R.string.msg_approval_denied))
     }
     fun requestApproval(sender: android.content.IntentSender, action: () -> Unit) {
         approvalAction = action
@@ -344,16 +377,39 @@ private fun GalleryContent(
     }
     fun deleteMedia(items: List<MediaItem>) {
         if (items.isEmpty()) return
-        val action: () -> Unit = {
-            runCatching {
-                items.forEach { MediaOperations.permanentlyDelete(ctx, it) }
-                items.forEach { GalleryPreferences.setTrashed(ctx, it, false) }
+        val action: () -> Unit = action@{
+            if (bulk != null) return@action
+            val total = items.size
+            val step = maxOf(1, total / 100)
+            bulkCancel.set(false)
+            selected = emptySet()
+            bulk = BulkProgress(ctx.getString(R.string.bulk_deleting, 0, total), 0f)
+            scope.launch {
+                var done = 0
+                val deletedKeys = ArrayList<String>(total)
+                // Delete IO thread pe: pehle poora loop main thread pe chalta tha (bahut items par UI atak jaata tha).
+                val failure: Throwable? = withContext(Dispatchers.IO) {
+                    runCatching {
+                        for (item in items) {
+                            if (bulkCancel.get()) break
+                            MediaOperations.permanentlyDelete(ctx, item)
+                            deletedKeys += item.key
+                            done++
+                            if (done % step == 0 || done == total) {
+                                bulk = BulkProgress(ctx.getString(R.string.bulk_deleting, done, total), done / total.toFloat())
+                            }
+                        }
+                    }.exceptionOrNull()
+                }
+                GalleryPreferences.setTrashedKeys(ctx, deletedKeys, false)
+                bulk = null
                 vm.refreshPreferences()
                 vm.load()
-                selected = emptySet()
-                Toast.makeText(ctx, ctx.getString(R.string.msg_deleted), Toast.LENGTH_SHORT).show()
-            }.onFailure {
-                Toast.makeText(ctx, ctx.getString(R.string.msg_delete_failed, it.message ?: ctx.getString(R.string.msg_permission_denied)), Toast.LENGTH_LONG).show()
+                when {
+                    failure != null -> notify(ctx.getString(R.string.msg_delete_failed, friendlyError(ctx, failure)), long = true)
+                    done < total -> notify(ctx.getString(R.string.msg_delete_partial, done, total))
+                    else -> notify(ctx.getString(R.string.msg_deleted))
+                }
             }
             Unit
         }
@@ -361,7 +417,7 @@ private fun GalleryContent(
             runCatching {
                 val request = MediaStore.createDeleteRequest(ctx.contentResolver, items.map { it.uri })
                 requestApproval(request.intentSender, action)
-            }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_delete_request_failed), Toast.LENGTH_LONG).show() }
+            }.onFailure { notify(ctx.getString(R.string.msg_delete_request_failed), long = true) }
         } else action()
     }
     fun renameMedia(item: MediaItem, name: String) {
@@ -369,14 +425,14 @@ private fun GalleryContent(
             runCatching {
                 MediaOperations.rename(ctx, item, name)
                 vm.load()
-                Toast.makeText(ctx, ctx.getString(R.string.msg_renamed), Toast.LENGTH_SHORT).show()
-            }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_rename_failed, it.message ?: ctx.getString(R.string.msg_permission_denied)), Toast.LENGTH_LONG).show() }
+                notify(ctx.getString(R.string.msg_renamed))
+            }.onFailure { notify(ctx.getString(R.string.msg_rename_failed, friendlyError(ctx, it)), long = true) }
             Unit
         }
         if (Build.VERSION.SDK_INT >= 30) {
             runCatching {
                 requestApproval(MediaStore.createWriteRequest(ctx.contentResolver, listOf(item.uri)).intentSender, action)
-            }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_write_request_failed), Toast.LENGTH_LONG).show() }
+            }.onFailure { notify(ctx.getString(R.string.msg_write_request_failed), long = true) }
         } else action()
     }
     /**
@@ -393,16 +449,16 @@ private fun GalleryContent(
         if (Build.VERSION.SDK_INT < 30) {
             GalleryPreferences.setTrashedKeys(ctx, items.map { it.key }, false)
             vm.refreshPreferences()
-            Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+            notify(message)
             return
         }
         runCatching {
             val request = MediaStore.createTrashRequest(ctx.contentResolver, items.map { it.uri }, false)
             requestApproval(request.intentSender) {
                 vm.load()
-                Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+                notify(message)
             }
-        }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_trash_request_failed), Toast.LENGTH_LONG).show() }
+        }.onFailure { notify(ctx.getString(R.string.msg_trash_request_failed), long = true) }
     }
     fun showUndoSnackbar(message: String, onUndo: () -> Unit) {
         val undoLabel = ctx.getString(R.string.action_undo)
@@ -432,16 +488,16 @@ private fun GalleryContent(
             vm.refreshPreferences()
         }
         if (systemItems.isEmpty()) {
-            Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+            notify(message)
             return
         }
         runCatching {
             val request = MediaStore.createTrashRequest(ctx.contentResolver, systemItems.map { it.uri }, true)
             requestApproval(request.intentSender) {
                 vm.load()
-                Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+                notify(message)
             }
-        }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_trash_request_failed), Toast.LENGTH_LONG).show() }
+        }.onFailure { notify(ctx.getString(R.string.msg_trash_request_failed), long = true) }
     }
     fun showRestoredSnackbar(items: List<MediaItem>) =
         showUndoSnackbar(ctx.getString(R.string.msg_restored)) { undoRestore(items) }
@@ -469,7 +525,7 @@ private fun GalleryContent(
                 vm.load()
                 if (value) showTrashedSnackbar(items) else showRestoredSnackbar(items)
             }
-        }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_trash_request_failed), Toast.LENGTH_LONG).show() }
+        }.onFailure { notify(ctx.getString(R.string.msg_trash_request_failed), long = true) }
     }
     fun migrateLegacyTrash(items: List<MediaItem>) {
         if (items.isEmpty()) return
@@ -480,21 +536,21 @@ private fun GalleryContent(
                 GalleryPreferences.setTrashedKeys(ctx, items.map { it.key }, false)
                 vm.refreshPreferences()
                 vm.load()
-                Toast.makeText(ctx, ctx.getString(R.string.msg_trash_migrated), Toast.LENGTH_SHORT).show()
+                notify(ctx.getString(R.string.msg_trash_migrated))
             }
-        }.onFailure { Toast.makeText(ctx, ctx.getString(R.string.msg_trash_request_failed), Toast.LENGTH_LONG).show() }
+        }.onFailure { notify(ctx.getString(R.string.msg_trash_request_failed), long = true) }
     }
 
     fun hideAlbum(id: Long) {
         GalleryPreferences.setAlbumHidden(ctx, id, true)
         vm.refreshPreferences()
         if (albumId == id) albumId = null
-        Toast.makeText(ctx, ctx.getString(R.string.msg_album_hidden), Toast.LENGTH_LONG).show()
+        notify(ctx.getString(R.string.msg_album_hidden), long = true)
     }
     fun unhideAlbum(id: Long) {
         GalleryPreferences.setAlbumHidden(ctx, id, false)
         vm.refreshPreferences()
-        Toast.makeText(ctx, ctx.getString(R.string.msg_album_unhidden), Toast.LENGTH_SHORT).show()
+        notify(ctx.getString(R.string.msg_album_unhidden))
     }
     fun lockAlbum(id: Long) {
         GalleryPreferences.setAlbumLocked(ctx, id, true)
@@ -505,19 +561,19 @@ private fun GalleryContent(
             if (canAuthenticateAlbum(ctx.findActivity())) R.string.msg_album_locked
             else R.string.msg_album_locked_no_screen_lock
         )
-        Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+        notify(msg)
     }
     fun unlockAlbum(id: Long) {
         val done = {
             GalleryPreferences.setAlbumLocked(ctx, id, false)
             vm.refreshPreferences()
-            Toast.makeText(ctx, ctx.getString(R.string.msg_lock_removed), Toast.LENGTH_SHORT).show()
+            notify(ctx.getString(R.string.msg_lock_removed))
         }
         val activity = ctx.findActivity()
         // Removing a lock needs the same authentication as opening; without any device lock there is nothing to protect.
         if (!canAuthenticateAlbum(activity)) done()
         else authenticateAlbum(activity, done) {
-            Toast.makeText(ctx, ctx.getString(R.string.msg_lock_remove_auth_failed), Toast.LENGTH_SHORT).show()
+            notify(ctx.getString(R.string.msg_lock_remove_auth_failed))
         }
     }
 
@@ -561,6 +617,16 @@ private fun GalleryContent(
     BackHandler(enabled = viewerIndex < 0 && albumId != null) { albumId = null }
     BackHandler(enabled = viewerIndex < 0 && tab == 4) { tab = 0 }
     BackHandler(enabled = viewerIndex < 0 && tab == 4 && settingsPage != 0) { settingsPage = 0 }
+
+    // Left/right swipe se tab badalna: sirf top-level list screens par, selection/search/album/settings sub-page/picker me nahi.
+    val switchTab: (Int) -> Unit = { index ->
+        tab = index
+        albumId = null
+        settingsPage = 0
+        if (index != 0) searchOpen = false
+    }
+    val swipeTabsEnabled = granted && pick == null && viewerIndex < 0 && selected.isEmpty() &&
+        albumId == null && !searchOpen && settingsPage == 0 && bulk == null
 
     // Tablet / landscape (>= 600dp): neeche ke pill ki jagah side Navigation Rail.
     val wideLayout = LocalConfiguration.current.screenWidthDp >= 600
@@ -803,7 +869,13 @@ private fun GalleryContent(
                     bottom = scaffoldPadding.calculateBottomPadding(),
                 )
             } else scaffoldPadding
-            Box(Modifier.fillMaxSize()) {
+            TabSwipeContainer(
+                tab = tab,
+                tabCount = 5,
+                enabled = swipeTabsEnabled,
+                onTabChange = switchTab,
+                modifier = Modifier.fillMaxSize(),
+            ) {
                 when {
                     !granted -> PermissionScreen(scaffoldPadding) { permissionLauncher.launch(mediaPermissions()) }
                     state.loading -> SkeletonGrid(columns, padding)
@@ -830,6 +902,18 @@ private fun GalleryContent(
                         columns = columns,
                         hiddenCount = state.hiddenAlbumIds.size,
                         lockedCount = state.lockedAlbumIds.size,
+                        sort = sort,
+                        onSort = { sort = it },
+                        slideshowMs = slideshowMs,
+                        onSlideshowMs = { slideshowMs = it; GalleryPreferences.setSlideshowDelayMs(ctx, it) },
+                        videoAutoplay = videoAutoplay,
+                        onVideoAutoplay = { videoAutoplay = it; GalleryPreferences.setVideoAutoplay(ctx, it) },
+                        videoMuted = videoMuted,
+                        onVideoMuted = { videoMuted = it; GalleryPreferences.setVideoMuted(ctx, it) },
+                        haptics = haptics,
+                        onHaptics = onHaptics,
+                        trashCount = trashedKeys.size,
+                        onOpenTrash = { tab = 3; albumId = null; settingsPage = 0; searchOpen = false },
                         onTheme = onTheme,
                         onColumns = { columns = it; GalleryPreferences.setColumns(ctx, it) },
                         onOpenHidden = { settingsPage = 1 },
@@ -871,7 +955,7 @@ private fun GalleryContent(
                                         open()
                                     }
                                     authenticateAlbum(ctx.findActivity(), unlockAndOpen) {
-                                        Toast.makeText(ctx, ctx.getString(R.string.msg_album_auth_failed), Toast.LENGTH_SHORT).show()
+                                        notify(ctx.getString(R.string.msg_album_auth_failed))
                                     }
                                 } else open()
                             },
@@ -901,6 +985,7 @@ private fun GalleryContent(
                         padding = padding,
                         selected = selected,
                         columns = columns,
+                        favoriteKeys = state.favoriteKeys,
                         flingFriction = if (tab == 0) 0.007f else 0.015f,
                         contentVersion = displayResult.version,
                         resetKey = Triple(sort, filter, search),
@@ -933,6 +1018,7 @@ private fun GalleryContent(
                             GalleryPreferences.setColumns(ctx, columns)
                         },
                         onLoadMore = vm::loadNextPage,
+                        daySelectEnabled = pick == null || pick.multiple,
                     ) }
                 }
             if (showFilterChip) {
@@ -997,15 +1083,40 @@ private fun GalleryContent(
                 onSetTrashed = { item, value -> trashMedia(listOf(item), value) },
                 onDelete = { deleteMedia(listOf(it)) },
                 onRename = ::renameMedia,
-                onCopyOrMove = { item, folder, move ->
-                    scope.launch(Dispatchers.IO) {
-                        val result = runCatching { MediaOperations.copyToAlbum(ctx, item, folder) }
-                        withContext(Dispatchers.Main) {
-                            if (result.isSuccess && result.getOrNull() != null) {
-                                Toast.makeText(ctx, ctx.getString(R.string.msg_copied, folder), Toast.LENGTH_SHORT).show()
-                                vm.load()
-                                if (move) deleteMedia(listOf(item))
-                            } else Toast.makeText(ctx, ctx.getString(R.string.msg_copy_failed, result.exceptionOrNull()?.message ?: ctx.getString(R.string.msg_unknown_error)), Toast.LENGTH_LONG).show()
+                albums = remember(state.albums, state.hiddenAlbumIds, state.lockedAlbumIds, currentList) {
+                    // Albums poore load na hue ho (state.albums khali) to abhi load hui list se banao.
+                    val base = state.albums.ifEmpty { buildAlbums(currentList) }
+                    base.filter {
+                        it.id.toString() !in state.hiddenAlbumIds && it.id.toString() !in state.lockedAlbumIds
+                    }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+                },
+                onCopyOrMove = { item, folder, move, destPath ->
+                    if (bulk == null) {
+                        bulkCancel.set(false)
+                        val label = ctx.getString(if (move) R.string.bulk_moving else R.string.bulk_copying)
+                        bulk = BulkProgress(label, null)
+                        scope.launch(Dispatchers.IO) {
+                            val result = runCatching {
+                                MediaOperations.copyToAlbum(
+                                    ctx, item, folder, destPath,
+                                    onProgress = { f -> bulk = BulkProgress(label, f.takeIf { it >= 0f }) },
+                                    isCancelled = { bulkCancel.get() },
+                                )
+                            }
+                            withContext(Dispatchers.Main) {
+                                bulk = null
+                                val error = result.exceptionOrNull()
+                                when {
+                                    error is MediaOperations.CopyCancelledException ->
+                                        notify(ctx.getString(R.string.msg_copy_cancelled))
+                                    result.isSuccess && result.getOrNull() != null -> {
+                                        notify(ctx.getString(R.string.msg_copied, folder))
+                                        vm.load()
+                                        if (move) deleteMedia(listOf(item))
+                                    }
+                                    else -> notify(ctx.getString(R.string.msg_copy_failed, friendlyError(ctx, error)), long = true)
+                                }
+                            }
                         }
                     }
                 },
@@ -1013,7 +1124,7 @@ private fun GalleryContent(
                     scope.launch(Dispatchers.IO) {
                         val result = runCatching { MediaOperations.setWallpaper(ctx, item) }
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(ctx, if (result.isSuccess) ctx.getString(R.string.msg_wallpaper_set) else ctx.getString(R.string.msg_wallpaper_failed, result.exceptionOrNull()?.message ?: ctx.getString(R.string.msg_unknown_error)), Toast.LENGTH_LONG).show()
+                            notify(if (result.isSuccess) ctx.getString(R.string.msg_wallpaper_set) else ctx.getString(R.string.msg_wallpaper_failed, friendlyError(ctx, result.exceptionOrNull())), long = true)
                         }
                     }
                 },
@@ -1022,14 +1133,22 @@ private fun GalleryContent(
                         val result = runCatching { MediaOperations.saveEditedCopy(ctx, item, edit) }
                         withContext(Dispatchers.Main) {
                             if (result.isSuccess && result.getOrNull() != null) {
-                                Toast.makeText(ctx, ctx.getString(R.string.msg_edit_saved), Toast.LENGTH_SHORT).show()
+                                notify(ctx.getString(R.string.msg_edit_saved))
                                 vm.load()
-                            } else Toast.makeText(ctx, ctx.getString(R.string.msg_edit_failed, result.exceptionOrNull()?.message ?: ctx.getString(R.string.msg_format_not_supported)), Toast.LENGTH_LONG).show()
+                            } else notify(ctx.getString(R.string.msg_edit_failed, friendlyError(ctx, result.exceptionOrNull(), R.string.err_unsupported)), long = true)
                         }
                     }
                 },
             )
         }
+        BulkProgressBar(
+            progress = bulk,
+            onCancel = { bulkCancel.set(true) },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = if (viewerIndex >= 0) 72.dp else 88.dp),
+        )
         if (viewerIndex >= 0) {
             // Viewer ke bottom bar ke upar.
             SnackbarHost(

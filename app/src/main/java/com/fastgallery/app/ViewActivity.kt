@@ -32,6 +32,7 @@ class ViewActivity : ComponentActivity() {
         val item = buildItem(uri, intent?.type)
         setContent {
             GalleryTheme(GalleryPreferences.theme(this)) {
+              com.fastgallery.app.ui.HapticsGate(GalleryPreferences.hapticsEnabled(this)) {
                 Viewer(
                     items = listOf(item),
                     startIndex = 0,
@@ -43,11 +44,12 @@ class ViewActivity : ComponentActivity() {
                     onSetTrashed = { _, _ -> },
                     onDelete = {},
                     onRename = { _, _ -> },
-                    onCopyOrMove = { _, _, _ -> },
+                    onCopyOrMove = { _, _, _, _ -> },
                     onWallpaper = {},
                     onEdit = { _, _ -> },
                     readOnly = true,
                 )
+              }
             }
         }
     }

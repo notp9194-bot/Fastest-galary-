@@ -63,6 +63,23 @@ object GalleryPreferences {
             .getOrDefault(MediaFilter.ALL)
     fun setFilter(context: Context, value: MediaFilter) { prefs(context).edit().putString("gallery_filter", value.name).apply() }
 
+    /** Slideshow me har photo kitni der dikhe (ms). */
+    fun slideshowDelayMs(context: Context): Int = prefs(context).getInt("slideshow_delay_ms", DEFAULT_SLIDESHOW_MS).coerceIn(1000, 15000)
+    fun setSlideshowDelayMs(context: Context, value: Int) { prefs(context).edit().putInt("slideshow_delay_ms", value.coerceIn(1000, 15000)).apply() }
+    const val DEFAULT_SLIDESHOW_MS = 3000
+
+    /** Viewer me video khulte hi apne aap chale (default band). */
+    fun videoAutoplay(context: Context): Boolean = prefs(context).getBoolean("video_autoplay", false)
+    fun setVideoAutoplay(context: Context, value: Boolean) { prefs(context).edit().putBoolean("video_autoplay", value).apply() }
+
+    /** Video bina awaaz ke shuru ho (default band). */
+    fun videoMuted(context: Context): Boolean = prefs(context).getBoolean("video_muted", false)
+    fun setVideoMuted(context: Context, value: Boolean) { prefs(context).edit().putBoolean("video_muted", value).apply() }
+
+    /** App ke andar haptic feedback (selection tick, long-press, scrubber). Default on. */
+    fun hapticsEnabled(context: Context): Boolean = prefs(context).getBoolean("haptics_enabled", true)
+    fun setHapticsEnabled(context: Context, value: Boolean) { prefs(context).edit().putBoolean("haptics_enabled", value).apply() }
+
     /** Video loop on/off (sab videos ke liye ek hi setting). */
     fun videoLoop(context: Context): Boolean = prefs(context).getBoolean("video_loop", false)
     fun setVideoLoop(context: Context, value: Boolean) { prefs(context).edit().putBoolean("video_loop", value).apply() }

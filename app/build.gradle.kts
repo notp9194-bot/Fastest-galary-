@@ -31,8 +31,8 @@ android {
         applicationId = "com.fastgallery.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 28
-        versionName = "1.4.22"
+        versionCode = 33
+        versionName = "1.4.27"
     }
 
     signingConfigs {

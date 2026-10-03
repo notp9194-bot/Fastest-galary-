@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -55,8 +56,11 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
+import coil.size.Scale
 import com.fastgallery.app.R
 import com.fastgallery.app.data.MediaItem
+import com.fastgallery.app.data.isGif
+import com.fastgallery.app.data.isRaw
 
 /** Material "Sort" icon (extended icons dependency ke bina). */
 val SortIcon: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
@@ -93,6 +97,35 @@ fun rememberImageRequest(uri: Uri, size: Int): ImageRequest {
 }
 
 /**
+ * Viewer ka decode size: screen ke bade side ka 1.5x (zoom me sharp rahe), 512..2560 px.
+ * Display aur prefetch dono yahi use karte hain, taaki memory-cache entry same rahe.
+ */
+fun viewerDecodeSize(widthPx: Int, heightPx: Int): Int =
+    (maxOf(widthPx, heightPx) * 1.5f).toInt().coerceIn(512, 2560)
+
+/**
+ * Viewer ki full-size request. Display (AsyncImage) aur neighbour prefetch (imageLoader.enqueue) dono isi ko
+ * use karte hain: data/size/scale same => memory-cache hit => swipe pe agli photo turant sharp dikhti hai.
+ * Crossfade sirf yahin hai (grid ka ImageLoader crossfade(false) hi rehta hai, grid me fade se scroll bhari lagta).
+ * Memory-cache hit pe Coil crossfade apne aap skip kar deta hai.
+ */
+fun viewerImageRequest(ctx: Context, uri: Uri, size: Int): ImageRequest =
+    ImageRequest.Builder(ctx)
+        .data(uri)
+        .size(size)
+        .scale(Scale.FIT)
+        .crossfade(VIEWER_CROSSFADE_MS)
+        .build()
+
+private const val VIEWER_CROSSFADE_MS = 160
+
+@Composable
+fun rememberViewerRequest(uri: Uri, size: Int): ImageRequest {
+    val ctx = LocalContext.current
+    return remember(uri, size) { viewerImageRequest(ctx, uri, size) }
+}
+
+/**
  * Grid/album thumbs: API 29+ pe MediaStore ke system-cached thumbnails (full decode se bahut fast),
  * purane Android pe sampled Coil decode.
  */
@@ -115,6 +148,8 @@ fun Thumb(
     item: MediaItem,
     sizePx: Int,
     selected: Boolean = false,
+    /** true = chhota heart badge (bottom-left). */
+    favorite: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
     /** true = long-press grid-level gesture (drag-to-select) handle karta hai; yahan sirf TalkBack action. */
@@ -132,6 +167,22 @@ fun Thumb(
         stringResource(R.string.thumb_photo_desc, dateLabel)
     }
     val selectedLabel = stringResource(R.string.thumb_selected)
+    val favoriteLabel = stringResource(R.string.thumb_favorite)
+    val stateLabel = when {
+        selected && favorite -> "$selectedLabel, $favoriteLabel"
+        selected -> selectedLabel
+        favorite -> favoriteLabel
+        else -> null
+    }
+    // Badges: GIF/RAW label thumbnail ke wahi corner me aate hain jahan video ki duration (dono kabhi saath nahi).
+    val typeBadge = remember(item.mime, item.name) {
+        when {
+            item.isVideo -> null
+            item.isGif() -> R.string.badge_gif
+            item.isRaw() -> R.string.badge_raw
+            else -> null
+        }
+    }
     val selectLabel = stringResource(R.string.thumb_select_action)
     val longClickAction = onLongClick
     Box(
@@ -144,7 +195,7 @@ fun Thumb(
             )
             // Ek hi TalkBack node: "Photo, 12 Mar 2025" + selected state.
             .semantics(mergeDescendants = true) {
-                if (selected) stateDescription = selectedLabel
+                if (stateLabel != null) stateDescription = stateLabel
                 if (longPressHandledByGrid) onLongClick(label = selectLabel) { longClickAction(); true }
             }
     ) {
@@ -169,6 +220,30 @@ fun Thumb(
                     color = Color.White,
                     style = MaterialTheme.typography.labelSmall,
                 )
+            }
+        }
+        if (typeBadge != null) {
+            Text(
+                stringResource(typeBadge),
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            )
+        }
+        if (favorite) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(4.dp)
+                    .size(20.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Favorite, null, tint = Color(0xFFFF6B81), modifier = Modifier.size(12.dp))
             }
         }
         if (selected) {

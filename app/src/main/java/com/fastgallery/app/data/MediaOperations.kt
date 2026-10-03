@@ -20,21 +20,41 @@ import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
 import com.fastgallery.app.R
 import java.io.File
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /** Crop area as fractions (0..1) of the already-rotated image. */
 data class CropRect(val left: Float, val top: Float, val right: Float, val bottom: Float)
 
+/**
+ * Editor ka poora result. Order (preview aur saved copy dono me same):
+ * EXIF orientation -> rotate (90s) -> flip -> straighten -> crop -> colour (brightness/contrast/saturation) -> filter.
+ * [flipHorizontal]/[flipVertical] rotate ke BAAD ki (dikhne wali) image par lagte hain.
+ * [brightness], [contrast], [saturation]: -100..100 (0 = koi badlav nahi). [straightenDegrees]: -45..45.
+ */
 data class ImageEdit(
     val rotationDegrees: Float = 0f,
     val crop: CropRect? = null,
     val filter: String = "Original",
+    val flipHorizontal: Boolean = false,
+    val flipVertical: Boolean = false,
+    val straightenDegrees: Float = 0f,
+    val brightness: Float = 0f,
+    val contrast: Float = 0f,
+    val saturation: Float = 0f,
 )
 
 object MediaOperations {
     private const val MAX_EDIT_PIXELS_NORMAL = 8_000_000L
     private const val MAX_EDIT_PIXELS_LOW_RAM = 4_000_000L
+    private const val MIN_STRAIGHTEN_DEGREES = 0.05f
+    /** Brightness slider ke +/-100 ka matlab colour offset +/-80 (0..255 scale). */
+    private const val BRIGHTNESS_OFFSET_RANGE = 80f
 
     fun rename(context: Context, item: MediaItem, name: String): Int {
         val entered = name.trim().takeIf { it.isNotEmpty() } ?: return 0
@@ -51,8 +71,48 @@ object MediaOperations {
     fun permanentlyDeleteUri(context: Context, uri: Uri): Int =
         context.contentResolver.delete(uri, null, null)
 
-    fun copyToAlbum(context: Context, item: MediaItem, album: String): Uri? {
+    /** Copy beech me user ne cancel kiya: aadhi bani file hata di jaati hai. */
+    class CopyCancelledException : RuntimeException("Copy cancelled")
+
+    /** input -> output, har chunk ke baad progress (0..1; size pata na ho to -1f) aur cancel check. */
+    private fun copyWithProgress(
+        input: java.io.InputStream,
+        output: java.io.OutputStream,
+        totalBytes: Long,
+        onProgress: ((Float) -> Unit)?,
+        isCancelled: (() -> Boolean)?,
+    ) {
+        val buffer = ByteArray(128 * 1024)
+        var copied = 0L
+        var lastPercent = -1
+        while (true) {
+            if (isCancelled?.invoke() == true) throw CopyCancelledException()
+            val read = input.read(buffer)
+            if (read < 0) break
+            output.write(buffer, 0, read)
+            copied += read
+            if (onProgress != null) {
+                if (totalBytes > 0L) {
+                    val percent = (copied * 100 / totalBytes).toInt().coerceIn(0, 100)
+                    if (percent != lastPercent) { lastPercent = percent; onProgress(percent / 100f) }
+                } else if (lastPercent != -1) {
+                    lastPercent = -1; onProgress(-1f)
+                }
+            }
+        }
+    }
+
+    fun copyToAlbum(
+        context: Context,
+        item: MediaItem,
+        album: String,
+        destRelativePath: String? = null,
+        onProgress: ((Float) -> Unit)? = null,
+        isCancelled: (() -> Boolean)? = null,
+    ): Uri? {
         val folder = album.trim().replace(Regex("[/\\\\]+"), "_").ifBlank { "FastGallery" }
+        // Existing album chuna ho to uska asli folder (jaise DCIM/Camera); warna naam se Pictures|Movies/<naam>.
+        val existingPath = destRelativePath?.let { safeRelativePath(it, item.isVideo) }
         val collection = if (item.isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
         else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         val extension = item.name.substringAfterLast('.', "")
@@ -61,7 +121,7 @@ object MediaOperations {
             val parent = Environment.getExternalStoragePublicDirectory(
                 if (item.isVideo) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_PICTURES,
             )
-            val directory = File(parent, folder)
+            val directory = if (existingPath != null) File(Environment.getExternalStorageDirectory(), existingPath) else File(parent, folder)
             if (!directory.exists() && !directory.mkdirs()) error("Could not create destination folder")
             val suffix = if (extension.isBlank()) "" else ".$extension"
             var destinationFile = File(directory, "$baseName (copy)$suffix")
@@ -71,7 +131,16 @@ object MediaOperations {
                 copyNumber++
             }
             val source = context.contentResolver.openInputStream(item.uri) ?: error("Could not open source media")
-            source.use { input -> destinationFile.outputStream().use { output -> input.copyTo(output) } }
+            try {
+                source.use { input ->
+                    destinationFile.outputStream().use { output ->
+                        copyWithProgress(input, output, item.sizeBytes, onProgress, isCancelled)
+                    }
+                }
+            } catch (error: Exception) {
+                destinationFile.delete()
+                throw error
+            }
             MediaScannerConnection.scanFile(context, arrayOf(destinationFile.absolutePath), arrayOf(item.mime), null)
             return Uri.fromFile(destinationFile)
         }
@@ -79,7 +148,7 @@ object MediaOperations {
             put(MediaStore.MediaColumns.DISPLAY_NAME, "$baseName (copy)${if (extension.isBlank()) "" else ".$extension"}")
             put(MediaStore.MediaColumns.MIME_TYPE, item.mime)
             if (Build.VERSION.SDK_INT >= 29) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, if (item.isVideo) "Movies/$folder/" else "Pictures/$folder/")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, existingPath ?: if (item.isVideo) "Movies/$folder/" else "Pictures/$folder/")
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
         }
@@ -89,7 +158,7 @@ object MediaOperations {
             val source = resolver.openInputStream(item.uri) ?: error("Could not open source media")
             source.use { input ->
                 val target = resolver.openOutputStream(destination, "w") ?: error("Could not create destination media")
-                target.use { output -> input.copyTo(output) }
+                target.use { output -> copyWithProgress(input, output, item.sizeBytes, onProgress, isCancelled) }
             }
             if (Build.VERSION.SDK_INT >= 29) {
                 resolver.update(destination, ContentValues().apply {
@@ -101,6 +170,18 @@ object MediaOperations {
             resolver.delete(destination, null, null)
             throw error
         }
+    }
+
+    /**
+     * MediaStore RELATIVE_PATH sirf kuch top-level folders allow karta hai (images: DCIM/Pictures, videos: DCIM/Movies).
+     * Baaki ya galat path (".." wagairah) par null: caller naam-based folder par fall back karta hai.
+     */
+    private fun safeRelativePath(path: String, isVideo: Boolean): String? {
+        val parts = path.split('/').filter { it.isNotBlank() }
+        if (parts.isEmpty() || parts.any { it == ".." || it == "." }) return null
+        val allowed = if (isVideo) setOf("DCIM", "Movies") else setOf("DCIM", "Pictures")
+        if (parts.first() !in allowed) return null
+        return parts.joinToString("/", postfix = "/")
     }
 
     /** Saves a non-destructive edited copy. Original is never overwritten. */
@@ -118,12 +199,15 @@ object MediaOperations {
         try {
             val (exifRotation, exifFlipped) = readExifTransform(context, item.uri)
             val userRotation = ((edit.rotationDegrees % 360f) + 360f) % 360f
-            val needsTransform = exifRotation != 0 || exifFlipped || userRotation != 0f
+            val userFlip = edit.flipHorizontal || edit.flipVertical
+            val needsTransform = exifRotation != 0 || exifFlipped || userRotation != 0f || userFlip
             if (needsTransform) {
                 val matrix = Matrix().apply {
                     if (exifRotation != 0) postRotate(exifRotation.toFloat())
                     if (exifFlipped) postScale(-1f, 1f)
                     if (userRotation != 0f) postRotate(userRotation)
+                    // Flip rotate ke baad: editor me jo dikhta hai wahi save hota hai.
+                    if (userFlip) postScale(if (edit.flipHorizontal) -1f else 1f, if (edit.flipVertical) -1f else 1f)
                 }
                 val oriented = Bitmap.createBitmap(
                     bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true,
@@ -131,6 +215,15 @@ object MediaOperations {
                 if (oriented !== bitmap) {
                     bitmap.recycle()
                     bitmap = oriented
+                }
+            }
+
+            // Straighten crop se pehle: crop fractions straighten ke baad wale (same size) frame ke hain.
+            if (abs(edit.straightenDegrees) >= MIN_STRAIGHTEN_DEGREES) {
+                val straightened = straightenBitmap(bitmap, edit.straightenDegrees)
+                if (straightened !== bitmap) {
+                    bitmap.recycle()
+                    bitmap = straightened
                 }
             }
 
@@ -150,11 +243,12 @@ object MediaOperations {
                 }
             }
 
-            if (edit.filter != "Original") {
-                val filtered = applyFilter(bitmap, edit.filter)
-                if (filtered !== bitmap) {
+            val colors = colorMatrix(edit.filter, edit.brightness, edit.contrast, edit.saturation)
+            if (colors != null) {
+                val colored = applyColorMatrix(bitmap, colors)
+                if (colored !== bitmap) {
                     bitmap.recycle()
-                    bitmap = filtered
+                    bitmap = colored
                 }
             }
 
@@ -271,13 +365,96 @@ object MediaOperations {
         return oriented
     }
 
-    private fun applyFilter(source: Bitmap, filter: String): Bitmap {
-        val matrix = filterMatrix(filter)?.let { ColorMatrix(it) } ?: ColorMatrix()
-        return Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888).also { output ->
+    private fun applyColorMatrix(source: Bitmap, matrix: FloatArray): Bitmap =
+        Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888).also { output ->
             Canvas(output).drawBitmap(source, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                colorFilter = ColorMatrixColorFilter(matrix)
+                colorFilter = ColorMatrixColorFilter(ColorMatrix(matrix))
             })
         }
+
+    /** Image ko [degrees] se ghumake wapas usi size ke frame me, itna zoom ke saath ki frame ke kone khali na dikhen. */
+    private fun straightenBitmap(source: Bitmap, degrees: Float): Bitmap {
+        val w = source.width
+        val h = source.height
+        val scale = straightenCoverScale(w, h, degrees)
+        val output = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val matrix = Matrix().apply {
+            postRotate(degrees, w / 2f, h / 2f)
+            postScale(scale, scale, w / 2f, h / 2f)
+        }
+        Canvas(output).drawBitmap(source, matrix, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        return output
+    }
+
+    /**
+     * Straighten ke baad frame khali na dikhe, isliye image ko itna bada karna padta hai (1.0 = degrees 0).
+     * Frame ko -degrees se ghumane par uska bounding box image ke andar aana chahiye:
+     * scale = cos + sin * (lambi side / chhoti side). Zara sa margin (0.4%) kinaron ki blending ke liye.
+     * Editor preview aur saved copy dono yahi function use karte hain, taaki dono bilkul same dikhen.
+     */
+    fun straightenCoverScale(width: Int, height: Int, degrees: Float): Float {
+        if (width <= 0 || height <= 0 || degrees == 0f) return 1f
+        val radians = Math.toRadians(min(abs(degrees), 45f).toDouble())
+        val longOverShort = max(width, height).toDouble() / min(width, height)
+        return ((cos(radians) + sin(radians) * longOverShort) * 1.004).toFloat()
+    }
+
+    /**
+     * Brightness/contrast/saturation (-100..100) aur filter ka milkar ek 4x5 colour matrix; kuch bhi set nahi to null.
+     * Order: saturation -> contrast -> brightness -> filter. Preview aur saved copy dono yahi use karte hain.
+     */
+    fun colorMatrix(filter: String, brightness: Float, contrast: Float, saturation: Float): FloatArray? {
+        val filterMatrix = filterMatrix(filter)
+        val b = brightness.coerceIn(-100f, 100f)
+        val c = contrast.coerceIn(-100f, 100f)
+        val s = saturation.coerceIn(-100f, 100f)
+        if (b == 0f && c == 0f && s == 0f) return filterMatrix
+        val contrastScale = 1f + c / 100f
+        val contrastShift = 128f * (1f - contrastScale)
+        val brightnessShift = b / 100f * BRIGHTNESS_OFFSET_RANGE
+        var m = saturationMatrix(1f + s / 100f)
+        m = concatColorMatrices(m, floatArrayOf(
+            contrastScale, 0f, 0f, 0f, contrastShift,
+            0f, contrastScale, 0f, 0f, contrastShift,
+            0f, 0f, contrastScale, 0f, contrastShift,
+            0f, 0f, 0f, 1f, 0f,
+        ))
+        m = concatColorMatrices(m, floatArrayOf(
+            1f, 0f, 0f, 0f, brightnessShift,
+            0f, 1f, 0f, 0f, brightnessShift,
+            0f, 0f, 1f, 0f, brightnessShift,
+            0f, 0f, 0f, 1f, 0f,
+        ))
+        if (filterMatrix != null) m = concatColorMatrices(m, filterMatrix)
+        return m
+    }
+
+    /** Android ke ColorMatrix.setSaturation jaisa matrix (pure math, taaki JVM unit test me chale). */
+    internal fun saturationMatrix(saturation: Float): FloatArray {
+        val inv = 1f - saturation
+        val r = 0.213f * inv
+        val g = 0.715f * inv
+        val b = 0.072f * inv
+        return floatArrayOf(
+            r + saturation, g, b, 0f, 0f,
+            r, g + saturation, b, 0f, 0f,
+            r, g, b + saturation, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f,
+        )
+    }
+
+    /** Do 4x5 colour matrices: pehle [first] lagta hai, uske baad [then]. */
+    internal fun concatColorMatrices(first: FloatArray, then: FloatArray): FloatArray {
+        val out = FloatArray(20)
+        for (row in 0 until 4) {
+            for (col in 0 until 5) {
+                var sum = 0f
+                for (k in 0 until 4) sum += then[row * 5 + k] * first[k * 5 + col]
+                if (col == 4) sum += then[row * 5 + 4]
+                out[row * 5 + col] = sum
+            }
+        }
+        return out
     }
 
     fun exifDetails(context: Context, item: MediaItem): List<Pair<String, String>> {
