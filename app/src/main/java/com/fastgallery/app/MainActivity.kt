@@ -17,6 +17,19 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -96,6 +109,7 @@ import com.fastgallery.app.ui.SkeletonGrid
 import com.fastgallery.app.ui.GalleryTheme
 import com.fastgallery.app.ui.ManagedAlbumsScreen
 import com.fastgallery.app.ui.MediaGrid
+import com.fastgallery.app.ui.RefreshableBox
 import com.fastgallery.app.ui.PartialAccessBanner
 import com.fastgallery.app.ui.PermissionScreen
 import com.fastgallery.app.ui.SettingsScreen
@@ -167,6 +181,7 @@ private fun GalleryContent(
 ) {
     val ctx = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val displayResult by vm.displayItems.collectAsStateWithLifecycle(
         initialValue = GalleryDisplayResult(),
     )
@@ -201,6 +216,8 @@ private fun GalleryContent(
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var albumId by rememberSaveable { mutableStateOf<Long?>(null) }
     var viewerIndex by rememberSaveable { mutableIntStateOf(-1) }
+    var viewerOrigin by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    var viewerOriginIndex by remember { mutableIntStateOf(-1) }
     // Settings sub-screens: 0 = main, 1 = hidden albums, 2 = locked albums
     var settingsPage by rememberSaveable { mutableIntStateOf(0) }
     var albumMenuOpen by remember { mutableStateOf(false) }
@@ -213,6 +230,8 @@ private fun GalleryContent(
     var sort by rememberSaveable { mutableStateOf(GallerySort.DATE_NEWEST) }
     var filter by rememberSaveable { mutableStateOf(MediaFilter.ALL) }
     var columns by rememberSaveable { mutableIntStateOf(GalleryPreferences.columns(ctx)) }
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val tick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var approvalAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     // Locked album bina authentication ke kabhi khula na rahe (process restore / relock ke baad bhi).
@@ -417,7 +436,35 @@ private fun GalleryContent(
     BackHandler(enabled = viewerIndex < 0 && tab == 4) { tab = 0 }
     BackHandler(enabled = viewerIndex < 0 && tab == 4 && settingsPage != 0) { settingsPage = 0 }
 
+    // Tablet / landscape (>= 600dp): neeche ke pill ki jagah side Navigation Rail.
+    val wideLayout = LocalConfiguration.current.screenWidthDp >= 600
     Box(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxSize()) {
+            if (wideLayout && viewerIndex < 0) {
+                GalleryNavRail(
+                    tab = tab,
+                    onSelect = { index ->
+                        tab = index
+                        albumId = null
+                        settingsPage = 0
+                        if (index != 0) searchOpen = false
+                    },
+                )
+            }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    // Rail ke saath side ka system inset dobara na lage.
+                    .then(
+                        if (wideLayout && viewerIndex < 0) {
+                            Modifier.consumeWindowInsets(
+                                WindowInsets.systemBars.union(WindowInsets.displayCutout)
+                                    .only(WindowInsetsSides.Start),
+                            )
+                        } else Modifier,
+                    ),
+            ) {
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -446,6 +493,7 @@ private fun GalleryContent(
                         if (selected.isNotEmpty()) {
                             val allSelected = currentList.isNotEmpty() && currentList.all { it.key in selected }
                             IconButton(onClick = {
+                                tick()
                                 selected = if (allSelected) emptySet() else currentList.map { it.key }.toSet()
                             }) {
                                 Icon(
@@ -510,7 +558,7 @@ private fun GalleryContent(
                         },
                         onDelete = { deleteMedia(picked) },
                     )
-                } else if (viewerIndex < 0) {
+                } else if (viewerIndex < 0 && !wideLayout) {
                     Surface(
                         modifier = Modifier
                             .navigationBarsPadding()
@@ -687,7 +735,11 @@ private fun GalleryContent(
                         }
                         EmptyState(icon, stringResource(titleRes), stringResource(subtitleRes), padding)
                     }
-                    else -> MediaGrid(
+                    else -> RefreshableBox(
+                        refreshing = refreshing,
+                        onRefresh = vm::refresh,
+                        topPadding = padding.calculateTopPadding(),
+                    ) { MediaGrid(
                         items = currentList,
                         padding = padding,
                         selected = selected,
@@ -695,16 +747,24 @@ private fun GalleryContent(
                         flingFriction = if (tab == 0) 0.007f else 0.015f,
                         contentVersion = displayResult.version,
                         resetKey = Triple(sort, filter, search),
-                        onOpen = { viewerIndex = it },
+                        sort = sort,
+                        onScrubStart = vm::loadAll,
+                        onOpen = { index, rect ->
+                            viewerOrigin = rect
+                            viewerOriginIndex = index
+                            viewerIndex = index
+                        },
                         onToggleSelection = { item ->
+                            tick()
                             selected = if (item.key in selected) selected - item.key else selected + item.key
                         },
+                        onSetSelection = { selected = it },
                         onPinchColumns = { next ->
                             columns = next.coerceIn(2, 8)
                             GalleryPreferences.setColumns(ctx, columns)
                         },
                         onLoadMore = vm::loadNextPage,
-                    )
+                    ) }
                 }
             if (granted && partialAccess && !partialBannerDismissed) {
                 PartialAccessBanner(
@@ -715,6 +775,8 @@ private fun GalleryContent(
             }
             }
         }
+            }
+        }
         if (viewerIndex >= 0 && currentList.isNotEmpty()) {
             Viewer(
                 items = currentList,
@@ -723,7 +785,9 @@ private fun GalleryContent(
                 trashedKeys = trashedKeys,
                 onLoadMore = vm::loadNextPage,
                 onClose = { viewerIndex = -1 },
-                onFavorite = { GalleryPreferences.toggleFavorite(ctx, it); vm.refreshPreferences() },
+                origin = viewerOrigin,
+                originIndex = viewerOriginIndex,
+                onFavorite = { tick(); GalleryPreferences.toggleFavorite(ctx, it); vm.refreshPreferences() },
                 onSetTrashed = { item, value -> trashMedia(listOf(item), value) },
                 onDelete = { deleteMedia(listOf(it)) },
                 onRename = ::renameMedia,
@@ -880,5 +944,44 @@ private fun FolderTabGlyph(tint: Color, scale: Float) {
             close()
         }
         drawPath(path = folder, color = tint)
+    }
+}
+
+@Composable
+private fun GalleryNavRail(tab: Int, onSelect: (Int) -> Unit) {
+    val destinations = listOf(
+        stringResource(R.string.nav_photos),
+        stringResource(R.string.nav_albums),
+        stringResource(R.string.nav_favorites),
+        stringResource(R.string.nav_trash),
+        stringResource(R.string.nav_settings),
+    )
+    NavigationRail(containerColor = MaterialTheme.colorScheme.surface) {
+        Spacer(Modifier.weight(1f))
+        destinations.forEachIndexed { index, label ->
+            val isSelected = tab == index
+            val tint = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+            NavigationRailItem(
+                selected = isSelected,
+                onClick = { onSelect(index) },
+                icon = {
+                    when (index) {
+                        0 -> GridTabGlyph(tint, 1f)
+                        1 -> FolderTabGlyph(tint, 1f)
+                        else -> Icon(
+                            imageVector = when (index) {
+                                2 -> Icons.Filled.Favorite
+                                3 -> Icons.Filled.Delete
+                                else -> Icons.Filled.Settings
+                            },
+                            contentDescription = label,
+                        )
+                    }
+                },
+                label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                alwaysShowLabel = true,
+            )
+        }
+        Spacer(Modifier.weight(1f))
     }
 }

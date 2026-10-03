@@ -63,6 +63,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -88,6 +90,24 @@ import com.fastgallery.app.R
 import com.fastgallery.app.data.Album
 import com.fastgallery.app.data.GridEntry
 import com.fastgallery.app.data.MediaItem
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.spring
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.platform.LocalHapticFeedback
+import com.fastgallery.app.data.GallerySort
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlin.math.pow
 
 @Composable
 private fun rememberGridFlingBehavior(friction: Float): FlingBehavior {
@@ -127,6 +147,44 @@ private fun rememberGridFlingBehavior(friction: Float): FlingBehavior {
     }
 }
 
+/** Chaude screen (tablet / landscape) pe columns user ke chune hue count ke hisaab se proportionally badhte hain. */
+fun effectiveColumns(columns: Int, screenWidthDp: Int): Int {
+    if (columns == 0) return maxOf(2, screenWidthDp / 112)
+    val factor = (screenWidthDp / 400f).coerceAtLeast(1f)
+    return (columns.coerceIn(2, 8) * factor).roundToInt().coerceIn(2, 16)
+}
+
+private const val MIN_COLUMNS = 2
+private const val MAX_COLUMNS = 8
+
+/**
+ * Pull-to-refresh: grid ke top pe neeche kheencho to MediaStore dobara load hota hai.
+ * Indicator top bar ke neeche dikhta hai (topPadding), warna wo bar ke peeche chhup jaata.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun RefreshableBox(
+    refreshing: Boolean,
+    onRefresh: () -> Unit,
+    topPadding: androidx.compose.ui.unit.Dp,
+    content: @Composable () -> Unit,
+) {
+    val state = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+    androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+        isRefreshing = refreshing,
+        onRefresh = onRefresh,
+        state = state,
+        modifier = Modifier.fillMaxSize(),
+        indicator = {
+            androidx.compose.material3.pulltorefresh.PullToRefreshDefaults.Indicator(
+                state = state,
+                isRefreshing = refreshing,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = topPadding),
+            )
+        },
+    ) { content() }
+}
+
 @Composable
 fun MediaGrid(
     items: List<MediaItem>,
@@ -136,24 +194,41 @@ fun MediaGrid(
     flingFriction: Float = 0.015f,
     contentVersion: Long,
     resetKey: Any = Unit,
-    onOpen: (Int) -> Unit,
+    sort: GallerySort = GallerySort.DATE_NEWEST,
+    /** index + tapped thumbnail ka window rect (viewer open-transition ke liye; na mile to null). */
+    onOpen: (Int, Rect?) -> Unit,
     onToggleSelection: (MediaItem) -> Unit,
+    /** Drag-to-select: poora naya selection (keys) ek saath set karta hai. */
+    onSetSelection: (Set<String>) -> Unit,
     onPinchColumns: (Int) -> Unit,
     onLoadMore: () -> Unit,
+    /** Scrubber pakadte hi: poori library load karwane ke liye (taaki handle poore range me chale). */
+    onScrubStart: () -> Unit = {},
 ) {
     val entries = remember(contentVersion) { com.fastgallery.app.data.buildEntries(items) }
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    val currentSelected by rememberUpdatedState(selected)
+    val currentEntries by rememberUpdatedState(entries)
+    val setSelection by rememberUpdatedState(onSetSelection)
     val currentColumns by rememberUpdatedState(columns)
     val changeColumns by rememberUpdatedState(onPinchColumns)
     val gridFlingBehavior = rememberGridFlingBehavior(flingFriction)
     // Cell size ek hi baar nikalo (har Thumb me BoxWithConstraints subcompose bahut slow tha).
     val density = LocalDensity.current
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
-    val thumbPx = remember(columns, screenWidthDp, density.density) {
-        val cols = if (columns == 0) maxOf(1, screenWidthDp / 112) else columns.coerceIn(2, 8)
+    val adaptiveColumns = maxOf(MIN_COLUMNS, screenWidthDp / 112)
+    val gridColumns = effectiveColumns(columns, screenWidthDp)
+    val thumbPx = remember(gridColumns, screenWidthDp, density.density) {
+        val cols = gridColumns
         ((screenWidthDp - 2f * (cols - 1)) / cols * density.density).toInt().coerceIn(64, 1024)
     }
+    // Live pinch: ungliyon ke saath grid smoothly scale hota hai; scale limit paar hote hi columns badalte hain
+    // aur scale ko compensate kar dete hain (cell ka size continuous rehta hai). Chhodne par scale 1 pe settle.
+    var pinchScale by remember { mutableFloatStateOf(1f) }
+    var pinchOrigin by remember { mutableStateOf(Offset.Zero) }
+    var settleJob by remember { mutableStateOf<Job?>(null) }
     // Filter/sort/search badalne par naye result top se dikhao.
     LaunchedEffect(resetKey) { gridState.scrollToItem(0) }
     LaunchedEffect(gridState, items.size) {
@@ -164,42 +239,169 @@ fun MediaGrid(
             if (lastVisible >= 0 && lastVisible >= total - 18) onLoadMore()
         }
     }
-    Box(Modifier.fillMaxSize()) {
+    var gridWindowPos by remember { mutableStateOf(Offset.Zero) }
+    Box(Modifier.fillMaxSize().onGloballyPositioned { gridWindowPos = it.positionInWindow() }) {
         LazyVerticalGrid(
-            columns = if (columns == 0) GridCells.Adaptive(112.dp) else GridCells.Fixed(columns.coerceIn(2, 8)),
+            columns = GridCells.Fixed(gridColumns),
             state = gridState,
             flingBehavior = gridFlingBehavior,
-            modifier = Modifier.fillMaxSize().pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    var startSpan = 0f
-                    var changed = false
-                    do {
-                        val event = awaitPointerEvent()
-                        val active = event.changes.filter { it.pressed }
-                        if (active.size >= 2) {
-                            val centerX = active.map { it.position.x }.average().toFloat()
-                            val centerY = active.map { it.position.y }.average().toFloat()
-                            val span = active.map {
-                                hypot(
-                                    (it.position.x - centerX).toDouble(),
-                                    (it.position.y - centerY).toDouble(),
-                                )
-                            }
-                                .average().toFloat() * 2f
-                            if (startSpan == 0f) startSpan = span
-                            else if (!changed && span > startSpan * 1.18f) {
-                                changeColumns((currentColumns - 1).coerceAtLeast(2))
-                                changed = true
-                            } else if (!changed && span < startSpan * 0.82f) {
-                                changeColumns((currentColumns + 1).coerceAtMost(8))
-                                changed = true
-                            }
-                            event.changes.forEach { it.consume() }
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    // Drag-to-select: long-press se selection shuru, phir ungli ghumao to beech ke sab select
+                    // (wapas aao to shrink). Anchor pehle se selected tha to ye deselect mode hai.
+                    // Kinare (top/bottom) ke paas ungli le jao to grid khud scroll hota hai.
+                    val edgePx = 80.dp.toPx()
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+
+                        fun hitEntryIndex(pos: Offset): Int {
+                            val hit = gridState.layoutInfo.visibleItemsInfo.firstOrNull {
+                                pos.x >= it.offset.x && pos.x < it.offset.x + it.size.width &&
+                                    pos.y >= it.offset.y && pos.y < it.offset.y + it.size.height
+                            } ?: return -1
+                            return if (currentEntries.getOrNull(hit.index) is GridEntry.Media) hit.index else -1
                         }
-                    } while (event.changes.any { it.pressed })
+
+                        val anchorIndex = hitEntryIndex(down.position)
+                        if (anchorIndex < 0) return@awaitEachGesture
+                        val base = currentSelected
+                        val anchorKey = (currentEntries[anchorIndex] as GridEntry.Media).item.key
+                        val deselect = anchorKey in base
+                        var lastIndex = anchorIndex
+                        var lastPos = down.position
+
+                        fun applyRange(index: Int) {
+                            val from = minOf(anchorIndex, index)
+                            val to = maxOf(anchorIndex, index)
+                            val keys = ArrayList<String>(to - from + 1)
+                            for (i in from..to) (currentEntries.getOrNull(i) as? GridEntry.Media)?.let { keys += it.item.key }
+                            setSelection(if (deselect) base - keys.toSet() else base + keys)
+                        }
+
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        applyRange(anchorIndex)
+
+                        val autoScroll = scope.launch {
+                            while (true) {
+                                delay(16)
+                                val h = gridState.layoutInfo.viewportSize.height.toFloat()
+                                val speed = when {
+                                    lastPos.y < edgePx -> -(edgePx - lastPos.y) / edgePx
+                                    lastPos.y > h - edgePx -> (lastPos.y - (h - edgePx)) / edgePx
+                                    else -> 0f
+                                }.coerceIn(-1f, 1f)
+                                if (speed != 0f) {
+                                    gridState.scrollBy(speed * 28f)
+                                    val idx = hitEntryIndex(lastPos)
+                                    if (idx >= 0 && idx != lastIndex) {
+                                        lastIndex = idx
+                                        applyRange(idx)
+                                    }
+                                }
+                            }
+                        }
+                        try {
+                            // Initial pass: grid ka scroll hamare drag ko na chheen sake.
+                            do {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (event.changes.count { it.pressed } >= 2) break
+                                lastPos = change.position
+                                val idx = hitEntryIndex(lastPos)
+                                if (idx >= 0 && idx != lastIndex) {
+                                    lastIndex = idx
+                                    applyRange(idx)
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
+                                event.changes.forEach { it.consume() }
+                            } while (change.pressed)
+                        } finally {
+                            autoScroll.cancel()
+                        }
+                    }
                 }
-            },
+                .pointerInput(adaptiveColumns) {
+                    awaitEachGesture {
+                        // Initial pass: do ungliyan hote hi hum pehle dekhte hain, taaki scroll/tap na chale.
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        var lastSpan = 0f
+                        var pinching = false
+                        do {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val active = event.changes.filter { it.pressed }
+                            if (active.size >= 2) {
+                                val centerX = active.map { it.position.x }.average().toFloat()
+                                val centerY = active.map { it.position.y }.average().toFloat()
+                                val span = active.map {
+                                    hypot(
+                                        (it.position.x - centerX).toDouble(),
+                                        (it.position.y - centerY).toDouble(),
+                                    )
+                                }.average().toFloat() * 2f
+                                if (!pinching) {
+                                    pinching = true
+                                    settleJob?.cancel()
+                                    lastSpan = span
+                                } else if (lastSpan > 0f && span > 0f) {
+                                    val zoom = span / lastSpan
+                                    lastSpan = span
+                                    pinchOrigin = Offset(centerX, centerY)
+                                    var s = pinchScale * zoom
+                                    val c = (if (currentColumns == 0) adaptiveColumns else currentColumns)
+                                        .coerceIn(MIN_COLUMNS, MAX_COLUMNS)
+                                    val inRatio = c.toFloat() / (c - 1).coerceAtLeast(1)
+                                    val outRatio = (c + 1f) / c
+                                    when {
+                                        c > MIN_COLUMNS && s >= inRatio.pow(0.6f) -> {
+                                            changeColumns(c - 1)
+                                            s /= inRatio
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        }
+                                        c < MAX_COLUMNS && s <= outRatio.pow(-0.6f) -> {
+                                            changeColumns(c + 1)
+                                            s *= outRatio
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        }
+                                        // Limit pe halka rubber-band, uske aage nahi.
+                                        else -> s = s.coerceIn(
+                                            if (c < MAX_COLUMNS) 0.4f else 0.88f,
+                                            if (c > MIN_COLUMNS) 2.5f else 1.12f,
+                                        )
+                                    }
+                                    pinchScale = s
+                                }
+                                event.changes.forEach { it.consume() }
+                            } else if (pinching) {
+                                // Ek ungli bachi hai: jab tak sab na uthein, tap/scroll mat chalne do.
+                                event.changes.forEach { it.consume() }
+                            }
+                        } while (event.changes.any { it.pressed })
+                        if (pinching) {
+                            settleJob?.cancel()
+                            settleJob = scope.launch {
+                                animate(
+                                    initialValue = pinchScale,
+                                    targetValue = 1f,
+                                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                                ) { value, _ -> pinchScale = value }
+                            }
+                        }
+                    }
+                }
+                .graphicsLayer {
+                    val s = pinchScale
+                    scaleX = s
+                    scaleY = s
+                    if (s != 1f) {
+                        transformOrigin = TransformOrigin(
+                            pinchOrigin.x / size.width.coerceAtLeast(1f),
+                            pinchOrigin.y / size.height.coerceAtLeast(1f),
+                        )
+                        clip = true
+                    }
+                },
             contentPadding = padding,
             horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -220,38 +422,35 @@ fun MediaGrid(
                         entry.item,
                         sizePx = thumbPx,
                         selected = entry.item.key in selected,
-                        onClick = { if (selected.isNotEmpty()) onToggleSelection(entry.item) else onOpen(entry.index) },
+                        onClick = {
+                            if (selected.isNotEmpty()) onToggleSelection(entry.item)
+                            else {
+                                val info = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == entry.item.key }
+                                val rect = info?.let {
+                                    Rect(
+                                        gridWindowPos.x + it.offset.x,
+                                        gridWindowPos.y + it.offset.y,
+                                        gridWindowPos.x + it.offset.x + it.size.width,
+                                        gridWindowPos.y + it.offset.y + it.size.height,
+                                    )
+                                }
+                                onOpen(entry.index, rect)
+                            }
+                        },
                         onLongClick = { onToggleSelection(entry.item) },
+                        longPressHandledByGrid = true,
                     )
                 }
             }
         }
         if (items.size > 50) {
-            BoxWithConstraints(Modifier.align(Alignment.CenterEnd).fillMaxSize()) {
-                val fraction = (gridState.firstVisibleItemIndex.toFloat() /
-                    gridState.layoutInfo.totalItemsCount.coerceAtLeast(1)).coerceIn(0f, 1f)
-                Box(
-                    Modifier
-                        .align(Alignment.TopEnd)
-                        .offset { IntOffset(0, (maxHeight.toPx() * fraction).toInt()) }
-                        .padding(end = 3.dp)
-                        .width(18.dp)
-                        .height(52.dp)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.55f), RoundedCornerShape(12.dp)),
-                )
-                Box(
-                    Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(24.dp)
-                        .pointerInput(items.size) {
-                            detectVerticalDragGestures { change, _ ->
-                                val next = (change.position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
-                                scope.launch {
-                                    val count = gridState.layoutInfo.totalItemsCount
-                                    if (count > 0) gridState.scrollToItem((count * next).toInt().coerceIn(0, count - 1))
-                                }
-                            }
-                        },
-                )
-            }
+            FastScroller(
+                gridState = gridState,
+                entries = entries,
+                sort = sort,
+                contentPadding = padding,
+                onScrubStart = onScrubStart,
+            )
         }
     }
 }
@@ -270,7 +469,7 @@ fun AlbumsGrid(
     onTogglePin: (Album) -> Unit,
 ) {
     LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
+        columns = GridCells.Adaptive(minSize = 160.dp),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = 12.dp,
@@ -434,7 +633,7 @@ fun SettingsScreen(
     onOpenLocked: () -> Unit,
 ) {
     androidx.compose.foundation.lazy.LazyColumn(
-        Modifier.fillMaxSize(),
+        Modifier.fillMaxSize().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 640.dp),
         contentPadding = PaddingValues(
             start = 20.dp, end = 20.dp,
             top = padding.calculateTopPadding() + 12.dp,
@@ -521,7 +720,7 @@ fun ManagedAlbumsScreen(
     }
     var picker by remember { mutableStateOf(false) }
     androidx.compose.foundation.lazy.LazyColumn(
-        Modifier.fillMaxSize(),
+        Modifier.fillMaxSize().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 640.dp),
         contentPadding = PaddingValues(
             start = 20.dp, end = 20.dp,
             top = padding.calculateTopPadding() + 12.dp,

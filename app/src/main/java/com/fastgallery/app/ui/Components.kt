@@ -47,6 +47,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
@@ -116,6 +117,8 @@ fun Thumb(
     selected: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
+    /** true = long-press grid-level gesture (drag-to-select) handle karta hai; yahan sirf TalkBack action. */
+    longPressHandledByGrid: Boolean = false,
 ) {
     val dateLabel = remember(item.dateTaken, item.dateAdded) {
         val millis = if (item.dateTaken > 0L) item.dateTaken else item.dateAdded * 1000L
@@ -127,14 +130,20 @@ fun Thumb(
         stringResource(R.string.thumb_photo_desc, dateLabel)
     }
     val selectedLabel = stringResource(R.string.thumb_selected)
+    val selectLabel = stringResource(R.string.thumb_select_action)
+    val longClickAction = onLongClick
     Box(
         Modifier
             .aspectRatio(1f)
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .then(
+                if (longPressHandledByGrid) Modifier.clickable(onClick = onClick)
+                else Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            )
             // Ek hi TalkBack node: "Photo, 12 Mar 2025" + selected state.
             .semantics(mergeDescendants = true) {
                 if (selected) stateDescription = selectedLabel
+                if (longPressHandledByGrid) onLongClick(label = selectLabel) { longClickAction(); true }
             }
     ) {
         AsyncImage(
@@ -221,7 +230,7 @@ fun openVideo(ctx: Context, item: MediaItem) {
  */
 @Composable
 fun SkeletonGrid(columns: Int, padding: PaddingValues) {
-    val cols = if (columns == 0) 3 else columns.coerceIn(2, 8)
+    val cols = effectiveColumns(columns, androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp)
     val loadingLabel = stringResource(R.string.loading)
     val transition = rememberInfiniteTransition(label = "skeleton")
     val pulse by transition.animateFloat(

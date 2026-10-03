@@ -93,6 +93,10 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(GalleryState())
     val state: StateFlow<GalleryState> = _state.asStateFlow()
 
+    private val _refreshing = MutableStateFlow(false)
+    /** Pull-to-refresh indicator: sirf user ke swipe se shuru hone wale refresh me true. */
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
     private val _query = MutableStateFlow(GalleryQuery())
     private var lastSearchSeen = ""
     // Debounce sirf search typing pe; tab/data change pe turant.
@@ -154,6 +158,12 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         if (lastSuccessfulRefreshMs == 0L || refreshPending) load()
     }
 
+    /** Pull-to-refresh: load() chalao aur khatam hone par indicator band karo. */
+    fun refresh() {
+        _refreshing.value = true
+        load()
+    }
+
     /**
      * Refreshes the first window. Existing content stays visible while it is refreshed.
      */
@@ -196,11 +206,13 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 lastSuccessfulRefreshMs = SystemClock.elapsedRealtime()
                 refreshPending = false
+                _refreshing.value = false
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
                 if (generation == loadGeneration) {
                     _state.value = _state.value.copy(loading = false, loadingMore = false)
+                    _refreshing.value = false
                 }
             }
         }

@@ -1,4 +1,4 @@
-# Fast Gallery 1.4.6
+# Fast Gallery 1.4.14
 
 Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26+).
 
@@ -6,8 +6,8 @@ Native Android gallery written in Kotlin and Jetpack Compose (Android 8+, API 26
 
 - Photos and videos with albums, date headers, animated GIF decoding, and device-provided RAW previews.
 - In-app video playback, photo zoom, swipe up/down to close the viewer, slideshow, photo details and available EXIF metadata.
-- Search, media-type filters (photos, videos, GIF and RAW), sort by date/name/size, grid column pinch zoom, and fast scroll handle.
-- Long-press multi-select with bulk share, favorites and trash actions.
+- Search, media-type filters (photos, videos, GIF and RAW), sort by date/name/size, live pinch-to-zoom grid columns, and a draggable fast scroller with date bubble.
+- Long-press multi-select with drag-to-select (ungli ghumake ek saath kai items) and bulk share, favorites and trash actions.
 - Rename, copy to another album/folder, or move (copy followed by Android's delete approval).
 - Trash with restore (30-day auto-delete), favorite collection, album hide, and device-authenticated album lock.
 - Full-screen edit screen with live preview: rotate 90°, drag-to-crop (free, 1:1, 4:3, 3:4, 16:9 with movable corners/edges) and Original/Mono/Warm/Cool filters. Edits are saved as a new JPEG; the source is preserved.
@@ -44,6 +44,54 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 2. Local: `keystore.properties.example` ko `keystore.properties` me copy karke values bharo, phir `gradle assembleRelease` ya `gradle bundleRelease` (Play Store ke liye AAB). `keystore.properties` aur `*.keystore` git me ignore hain.
 3. GitHub Actions: repo Secrets me `ANDROID_KEYSTORE_BASE64` (`base64 -w0 release.keystore`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` daalo. `v*` tag build bina keystore secret ke fail hota hai.
 4. Note: debug key se pehle install ki hui APK ke upar apni keystore wali APK install nahi hogi (signature alag) - uninstall karke install karo.
+
+## Updates in 1.4.14
+
+- Feature: **Pull-to-refresh**. Photos / Favorites / Trash / album grid ke top pe neeche kheencho to library dobara load hoti hai (`vm.refresh()`), indicator top bar ke neeche dikhta hai. Auto-refresh (ContentObserver) pehle jaisa chalta rehta hai; ye sirf manual option hai. Material3 `PullToRefreshBox` (BOM 2024.09.03 / material3 1.3.0).
+- Version: `versionName` 1.4.14 / `versionCode` 20.
+
+## Updates in 1.4.13
+
+- Viewer: **Double-tap zoom** ab smooth animation ke saath aur tap wali jagah par zoom hota hai (pehle center pe jhatke se). Dobara double-tap se smooth zoom-out.
+- Viewer: **Swipe-up for details**. Photo/video ko upar kheencho to Details bottom sheet khulta hai (menu ke Details se bhi wahi). Neeche kheencho to viewer band hota hai. Chhodne par photo spring se wapas aati hai.
+- Viewer: **Open/close transition**. Grid me tap ki hui thumbnail se photo expand hoti hai, aur back / close / swipe-down par wapas usi thumbnail me simat jaati hai (agar beech me swipe karke doosri photo par aa gaye to fade). Ye shared-element jaisa effect `ui/Viewer.kt` me custom hai (thumbnail ke window-bounds se), kisi experimental API ke bina.
+- Viewer: Details me `"$label: $value"` ki jagah label aur value alag columns me (localization-friendly, item #10 bhi ho gaya).
+- Version: `versionName` 1.4.13 / `versionCode` 19.
+
+## Updates in 1.4.12
+
+- Feature: **Hindi (हिन्दी) translation**. `values-hi/strings.xml` me saari 189 strings (placeholders `%1$d`/`%1$s` same). Phone ki language Hindi ho to app apne aap Hindi me khulta hai.
+- Feature: **Per-app language** (Android 13+): `res/xml/locales_config.xml` (en, hi) + manifest `android:localeConfig`, to Settings > Apps > Fast Gallery > Language me app ki bhasha alag se chuni ja sakti hai. Nayi bhasha jodne ke liye `values-xx/strings.xml` banao aur `locales_config.xml` me line add karo.
+- Note: viewer ke info rows ka `"$label: $value"` formatting abhi code me hai (item #10), baaki saari UI text resources se aati hai.
+- Version: `versionName` 1.4.12 / `versionCode` 18.
+
+## Updates in 1.4.11
+
+- Feature: **Tablet / landscape**. Screen width >= 600dp pe neeche ke pill ki jagah side **Navigation Rail** (Photos, Albums, Favorites, Trash, Settings). Selection mode me neeche ka action bar pehle jaisa rehta hai.
+- Grid columns ab screen width ke saath badhte hain (400dp reference; phone portrait pe koi badlav nahi). User ka chuna hua count (Settings / pinch) base rehta hai, e.g. 3 columns phone pe 3, 840dp tablet pe ~6. Max 16.
+- Albums grid ab adaptive (min 160dp card), aur Settings / hidden-locked screens wide screen pe max 640dp me center hote hain.
+- Version: `versionName` 1.4.11 / `versionCode` 17.
+
+## Updates in 1.4.10
+
+- Feature: **Haptics**. Long-press pe selection shuru hote hi vibration (1.4.8 se), drag-select me naye item par halka tick, pinch me columns badalne par tick (1.4.7 se), aur ab: selection mode me tap se select/deselect, Select all / Deselect all, aur viewer me Favorite toggle par bhi halka tick. Fast scroller ke bubble me bhi tick (1.4.7).
+- Version: `versionName` 1.4.10 / `versionCode` 16.
+
+## Updates in 1.4.9
+
+- Feature: **Predictive back**. Manifest me `android:enableOnBackInvokedCallback="true"`. Android 13+ (dev option) / 14+ pe back gesture ke dauran system preview animation dikhta hai, aur Android 15+ pe app se home jaane ka animation bhi. Saare in-app back actions (viewer band, selection clear, album/settings se wapas) pehle se `BackHandler` pe hain, isliye unka behavior same rehta hai.
+- Version: `versionName` 1.4.9 / `versionCode` 15.
+
+## Updates in 1.4.8
+
+- Feature: **Drag-to-select**. Kisi photo pe long-press karo aur ungli ghumao - beech ke sab items select ho jaate hain (wapas aao to shrink). Pehle se selected photo se shuru karo to deselect mode. Screen ke top/bottom kinare pe ungli le jao to grid khud scroll hota hai. Long-press pe aur naye item pe aane par haptic. TalkBack me "Select" action milta hai.
+- Version: `versionName` 1.4.8 / `versionCode` 14.
+
+## Updates in 1.4.7
+
+- Feature: **Fast scroll + date scrubber** (`ui/FastScroller.kt`). Scroll karte hi handle aata hai, ruk ke ~1.5s baad chhup jaata hai. Handle pakad ke drag karo to grid turant jump karta hai aur bubble dikhta hai: Date sort me mahina-saal (e.g. "Sep 2026"), Name sort me pehla akshar, Size sort me file size. Drag shuru hote hi poori library load hoti hai (`vm.loadAll`), taaki badi library me handle poore range me chale. Bubble badalne par halka haptic tick.
+- Feature: **Live pinch-to-zoom grid**. Pehle pinch sirf ek step me columns badalta tha; ab ungliyon ke saath grid smoothly scale hota hai, limit paar hone par columns 2-8 ke beech badalte hain (haptic tick ke saath) aur chhodne par spring se settle hota hai. Pinch ke dauran scroll/tap nahi chalte.
+- Version: `versionName` 1.4.7 / `versionCode` 13.
 
 ## Updates in 1.4.6
 

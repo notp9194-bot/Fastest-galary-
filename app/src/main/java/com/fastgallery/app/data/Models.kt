@@ -40,7 +40,7 @@ data class Album(
 sealed interface GridEntry {
     val key: Any
 
-    data class Header(val label: String) : GridEntry {
+    data class Header(val label: String, val millis: Long = 0L) : GridEntry {
         override val key: Any get() = "h_$label"
     }
 
@@ -65,7 +65,7 @@ fun buildEntries(items: List<MediaItem>): List<GridEntry> {
         val day = (ms + tz.getOffset(ms)) / 86_400_000L
         if (day != lastDay) {
             lastDay = day
-            out += GridEntry.Header(fmt.format(Date(ms)))
+            out += GridEntry.Header(fmt.format(Date(ms)), ms)
         }
         out += GridEntry.Media(m, i)
     }
