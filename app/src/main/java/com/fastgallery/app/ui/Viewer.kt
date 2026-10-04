@@ -441,21 +441,33 @@ fun Viewer(
             ) {
                 // Swipe-up sheet me wahi actions jo 3-dot menu me hain (dono jagah). Open-with (readOnly) me sirf details.
                 if (!readOnly) {
-                    SheetAction(Icons.Filled.Edit, stringResource(R.string.action_rename)) {
-                        details = null
-                        renameText = item.name
-                        renameTarget = item
+                    // 2 column grid (kam jagah): Rename | Wallpaper, Copy | Move, Share | Delete. Video me Wallpaper nahi,
+                    // to baaki upar khisak jaate hain aur aakhri odd item akela left me rehta hai.
+                    val actions = buildList<SheetActionSpec> {
+                        add(SheetActionSpec(Icons.Filled.Edit, stringResource(R.string.action_rename)) {
+                            renameText = item.name
+                            renameTarget = item
+                        })
+                        if (!item.isVideo) add(SheetActionSpec(WallpaperIcon, stringResource(R.string.action_wallpaper)) { onWallpaper(item) })
+                        add(SheetActionSpec(CopyIcon, stringResource(R.string.action_copy)) { copyTarget = item })
+                        add(SheetActionSpec(MoveIcon, stringResource(R.string.action_move_to)) { moveTarget = item })
+                        add(SheetActionSpec(Icons.Filled.Share, stringResource(R.string.action_share)) { shareItem(ctx, item) })
+                        add(
+                            SheetActionSpec(
+                                DeleteForeverIcon,
+                                stringResource(R.string.action_delete_permanently),
+                                destructive = true,
+                            ) { onDelete(item) },
+                        )
                     }
-                    SheetAction(CopyIcon, stringResource(R.string.action_copy)) { details = null; copyTarget = item }
-                    SheetAction(MoveIcon, stringResource(R.string.action_move_to)) { details = null; moveTarget = item }
-                    if (!item.isVideo) {
-                        SheetAction(WallpaperIcon, stringResource(R.string.action_wallpaper)) { details = null; onWallpaper(item) }
+                    actions.chunked(2).forEach { pair ->
+                        Row(Modifier.fillMaxWidth()) {
+                            pair.forEach { spec ->
+                                SheetAction(spec, Modifier.weight(1f)) { details = null; spec.onClick() }
+                            }
+                            if (pair.size == 1) androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                        }
                     }
-                    SheetAction(
-                        DeleteForeverIcon,
-                        stringResource(R.string.action_delete_permanently),
-                        tint = MaterialTheme.colorScheme.error,
-                    ) { details = null; onDelete(item) }
                     Box(
                         Modifier
                             .fillMaxWidth()
@@ -523,24 +535,33 @@ fun Viewer(
     } }
 }
 
-/** Swipe-up sheet ki ek action row (icon + label), poori width tappable. */
+/** Swipe-up sheet ki ek action ka data (icon + label + click). destructive = laal rang (permanent delete). */
+private class SheetActionSpec(
+    val icon: ImageVector,
+    val label: String,
+    val destructive: Boolean = false,
+    val onClick: () -> Unit,
+)
+
+/** Swipe-up sheet grid ka ek cell (icon + label), poora cell tappable. */
 @Composable
-private fun SheetAction(
-    icon: ImageVector,
-    label: String,
-    tint: Color = MaterialTheme.colorScheme.onSurface,
-    onClick: () -> Unit,
-) {
+private fun SheetAction(spec: SheetActionSpec, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val tint = if (spec.destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
     Row(
-        Modifier
-            .fillMaxWidth()
+        modifier
             .clickable(onClick = onClick)
-            .padding(vertical = 14.dp),
+            .padding(vertical = 12.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
-        androidx.compose.foundation.layout.Spacer(Modifier.size(20.dp))
-        Text(label, style = MaterialTheme.typography.bodyLarge, color = tint)
+        Icon(spec.icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
+        androidx.compose.foundation.layout.Spacer(Modifier.size(12.dp))
+        Text(
+            spec.label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = tint,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

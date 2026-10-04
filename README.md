@@ -51,6 +51,68 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
 - `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
 
+## Updates in 1.4.56
+
+- **Grid crossfade band.** `Thumb` ab fade-in nahi karta: pehle grey se aate cells 120ms fade karte the (har cell par animation + redraw). Ab tiny preview -> poora thumbnail seedha badalta hai (dono ek hi jaise, to jhatka nahi dikhta). `thumbImageRequest(fadeIn = true)` ka option bacha hai (grid use nahi karta).
+- **Fixed cell size: pehle se tha, badlav nahi.** Cell `aspectRatio(1f)` + `GridCells.Fixed`, aur thumbnail request me `size(sizePx)` explicit hai (Coil layout measure ka intezaar nahi karta); items me `key` + `contentType` bhi pehle se hain. `animateItem()` rakha hai (trash/favorite/filter par smooth khisakna; scroll me koi kharcha nahi jab tak list na badle).
+- Version: `versionName` 1.4.56 / `versionCode` 62.
+
+Build/tests yahan nahi chale. Device par: tej scroll ke baad thumbnails ka badalna chubhe to `thumbImageRequest(..., fadeIn = true)` wapas lagao.
+
+## Updates in 1.4.55
+
+- **Hardware bitmap + RGB_565 thumbnails (asli me ab lage).** `GalleryApp` me `allowRgb565(true)` pehle se tha, par grid ke thumbnails custom fetchers se aate hain jinka `DrawableResult` Coil ke `allowHardware` / `allowRgb565` se guzarta hi nahi, to wo setting grid par kaam nahi karti thi. Ab:
+  - API 29+ (`ThumbFetcher`): `loadThumbnail` ka bitmap fetch thread par hi **HARDWARE** me copy hota hai (`toHardwareOrSelf`): Java heap / GC kam, aur pehli draw par texture upload render thread ko nahi atkata. Dikkat par original software bitmap (fallback). `canUseHardwareThumb(sdk >= 28)`.
+  - API 26-28 (`LegacyThumbFetcher`): decode `inPreferredConfig = RGB_565` (memory aadhi; alpha wali PNG par decoder khud ARGB_8888 leta hai). Hardware yahan nahi (API 26-27 file-descriptor limit).
+  - Viewer / edit / wallpaper ke full-size requests par koi asar nahi (wo thumb fetcher nahi use karte).
+- Test `ThumbConfigTest`. Version: `versionName` 1.4.55 / `versionCode` 61.
+
+Build/tests yahan nahi chale. Device par: grid scroll smooth rahe, thumbnails ke colors / banding theek, aur Legacy (API 26-28) device par gradient wali photos me banding zyada na lage (lage to RGB_565 wali 2 lines hata do).
+
+## Updates in 1.4.54
+
+- **Prefetch badhaya:** slow scroll / ruke grid me scroll ki disha me ab 3 rows aage (pehle 2) ke thumbnails memory-cache me pehle se aate hain (`PREFETCH_ROWS` = 3). Tablet / zyada columns par memory-cache na bhare, isliye upar seema `PREFETCH_MAX_CELLS` = 36 (`prefetchCellCount`). Fast scroll me prefetch band rehta hai (pehle jaisa), aur nayi position aate hi purani prefetch requests cancel.
+- Test `prefetchCountIsRowsTimesColumnsButCapped`.
+- Version: `versionName` 1.4.54 / `versionCode` 60.
+
+Build/tests yahan nahi chale. Device par: dheere scroll me aage ke cells bina grey dikhe aayein; low-RAM phone par memory / jank dekho, zyada ho to `PREFETCH_ROWS` wapas 2 karo.
+
+## Updates in 1.4.53
+
+- **Grid: tej scroll ke baad thumbnails ek saath "pop" hote the.** Ab progressive + staggered load:
+  - Fast scroll me grey cell pehle jaisa grey rehta hai (fling FPS ke liye; full-size decode defer hi hai).
+  - Scroll dheema hote hi pehle **tiny (40px) blurry preview** aata hai (`TINY_THUMB_PX`, kuch ms, kam memory), phir poora thumbnail **12 slots me 14ms ke gap se staggered** (`thumbStaggerDelayMs`) aata hai, sab ek saath nahi. Poora aate hi tiny layer hat jaati hai (`onSuccess`).
+  - Jo cell dheemi scroll me dikhte hain ya memory-cache me hain, unme koi badlav nahi (turant load, tiny/stagger nahi).
+  - Cancel: tiny aur poora dono AsyncImage hain, cell screen se nikalte hi Coil request cancel; stagger wala `LaunchedEffect` bhi. Concurrency limit (`ThumbFetcher` semaphore) pehle jaisi.
+  - Constants `ScrollPlaceholder.kt` me; test `thumbStaggerSpreadsCellsAcrossSlotsWithoutExceedingMax`.
+- Version: `versionName` 1.4.53 / `versionCode` 59.
+
+Build/tests yahan nahi chale. Device par: bada album, tej fling phir ruko: blurry preview turant, phir sharp hota jaye (pop nahi). Dekho FPS girti to nahi; zyada ho to `TINY_THUMB_PX` ya `THUMB_STAGGER_*` badlo.
+
+## Updates in 1.4.52
+
+- **Bug fix: Move karne par file ka naam "X (copy)" ho jaata tha.** Ab Move me original naam rehta hai (`copyToAlbum(..., keepName = true)`); "(copy)" suffix sirf Copy me. Naam pehle se maujood ho to API 29+ me MediaStore khud number lagata hai, API < 29 me `X (2)`.
+- **Undo for Copy aur Move** (API 29+). Result snackbar me "Undo":
+  - Copy ka Undo: bani hui copies delete (system approval ke saath), message "Copy undone".
+  - Move ka Undo: copies ko unke original album (original relative path) me wapas move karta hai, naam wahi. Alag-alag albums se aaye items har ek apne album me jaate hain; message "Moved to <album>" ya "Moved to original albums".
+  - Undo tabhi dikhta hai jab kaam poora hua ho aur (Move me) har source ka original path pata ho. Adhoora / fail / cancel par Undo nahi.
+  - `copyOrMoveMedia` ab `runTransfer(jobs, ...)` use karta hai; har `TransferJob` ka apna destination. `deleteMedia(items, movedTo, onMoveUndo, doneMessage)`; `showUndoSnackbar` ko `deleteMedia` se upar le gaye (local fun use se pehle declare hona chahiye).
+  - Pure rules `data/TransferRules.kt` me (`canUndo`, `undoJobs`, `undoLabel`) + `TransferRulesTest` (4 tests).
+- Trash/Restore ka Undo pehle se tha (badlav nahi).
+- Strings (en + hi): `msg_copy_undone`, `label_original_albums`.
+- Version: `versionName` 1.4.52 / `versionCode` 58.
+
+Build/tests yahan nahi chale. Device par: Move ke baad naam "(copy)" na ho; Move aur Copy ke baad Undo; alag albums wala multi-select Move + Undo.
+
+## Updates in 1.4.51
+
+- **Swipe-up sheet: 2-column grid + Share.** Ab 6 actions 2-2 ke jodo me (kam jagah): Rename | Wallpaper, Copy | Move, Share | Delete permanently. Details pehle jaisa neeche alag. Video me Wallpaper nahi, to baaki upar khisakte hain (Rename | Copy, Move | Share, Delete akela left me).
+  - `SheetActionSpec` + `SheetAction` (`Viewer.kt`), Share = `shareItem(ctx, item)`. Naya string nahi.
+  - 3-dot menu me badlav nahi.
+- Version: `versionName` 1.4.51 / `versionCode` 57.
+
+Build/tests yahan nahi chale. Device par: chhoti screen / Hindi me label 2 line me kategi ya nahi, aur video par 5-item layout dekho.
+
 ## Updates in 1.4.50
 
 - **Viewer: 3-dot ke options ab swipe-up sheet me bhi.** Photo/video par upar swipe karne se jo sheet khulti thi (sirf details), ab usme upar actions bhi hain: Rename, Copy to…, Move to…, Set as wallpaper (sirf photo), Delete permanently (laal), phir neeche details. 3-dot menu pehle jaisa hi hai (dono jagah same actions).

@@ -198,6 +198,8 @@
     <string name="bulk_moving_n">Moving %1$d of %2$d</string>
     <string name="msg_delete_partial">Deleted %1$d of %2$d</string>
     <string name="msg_copy_cancelled">Copy cancelled</string>
+    <string name="msg_copy_undone">Copy undone</string>
+    <string name="label_original_albums">original albums</string>
     <string name="msg_move_cancelled">Move cancelled. Originals were kept.</string>
     <string name="copy_new_album">New album</string>
     <string name="copy_current_album">%1$d · Current album</string>

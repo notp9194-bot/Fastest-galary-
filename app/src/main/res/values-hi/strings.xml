@@ -172,6 +172,8 @@
     <string name="bulk_moving_n">%2$d में से %1$d मूव हो रहे हैं</string>
     <string name="msg_delete_partial">%2$d में से %1$d हटाए गए</string>
     <string name="msg_copy_cancelled">कॉपी रद्द किया गया</string>
+    <string name="msg_copy_undone">कॉपी वापस ली गई</string>
+    <string name="label_original_albums">मूल एल्बम</string>
     <string name="msg_move_cancelled">मूव रद्द किया गया। मूल फ़ाइलें रखी गईं।</string>
     <string name="copy_new_album">नया एल्बम</string>
     <string name="copy_current_album">%1$d · मौजूदा एल्बम</string>

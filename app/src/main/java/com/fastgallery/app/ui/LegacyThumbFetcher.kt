@@ -123,7 +123,9 @@ class LegacyThumbFetcher(
 
     private fun readCached(key: String): Bitmap? {
         val snapshot = diskCache.openSnapshot(key) ?: return null
-        val bitmap = snapshot.use { BitmapFactory.decodeFile(it.data.toString()) }
+        // RGB_565: thumbnail me memory aadhi (alpha wali image par decoder khud ARGB_8888 le leta hai).
+        val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+        val bitmap = snapshot.use { BitmapFactory.decodeFile(it.data.toString(), opts) }
         // Kharab/adhuri file: hata do, dobara bana lenge.
         if (bitmap == null) diskCache.remove(key)
         return bitmap
@@ -172,6 +174,7 @@ private fun decodeLegacyImage(context: Context, uri: Uri, size: Int): Bitmap? {
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
     val opts = BitmapFactory.Options().apply {
         inSampleSize = legacyThumbSampleSize(bounds.outWidth, bounds.outHeight, size)
+        inPreferredConfig = Bitmap.Config.RGB_565 // thumbnail me memory aadhi; alpha wali image par decoder ignore karta hai
     }
     val decoded = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null
     val scaled = scaleToThumb(decoded, size)

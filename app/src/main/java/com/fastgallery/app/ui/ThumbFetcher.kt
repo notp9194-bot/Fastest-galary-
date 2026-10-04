@@ -38,6 +38,25 @@ internal const val MAX_PARALLEL_THUMB_LOADS = 8
 private val thumbPermits = Semaphore(MAX_PARALLEL_THUMB_LOADS)
 
 /**
+ * Hardware bitmap (GPU memory): Java heap / GC par bojh kam, aur texture upload fetch thread par ho jaata hai, to
+ * scroll me pehli baar draw par render thread nahi atakta. API 28+ hi (API 26-27 par file-descriptor limit ka khatra,
+ * isliye Coil bhi wahan band rakhta hai). Custom fetcher ka `DrawableResult` Coil ke `allowHardware` / `allowRgb565`
+ * se nahi guzarta, isliye ye conversion yahin karte hain.
+ */
+internal fun canUseHardwareThumb(sdkInt: Int): Boolean = sdkInt >= 28
+
+/** Hardware copy; kisi bhi dikkat par (OOM, unsupported) original software bitmap hi wapas. */
+private fun Bitmap.toHardwareOrSelf(): Bitmap {
+    if (!canUseHardwareThumb(Build.VERSION.SDK_INT) || config == Bitmap.Config.HARDWARE) return this
+    return try {
+        val hardware = copy(Bitmap.Config.HARDWARE, false)
+        if (hardware != null && hardware !== this) { recycle(); hardware } else this
+    } catch (_: Throwable) {
+        this
+    }
+}
+
+/**
  * Android ka apna pre-generated/cached MediaStore thumbnail use karta hai (API 29+).
  * Full-resolution JPEG/video decode skip hota hai, isliye first open pe grid turant bharta hai.
  *
@@ -51,7 +70,7 @@ class ThumbFetcher(
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
         if (Build.VERSION.SDK_INT < 29) throw UnsupportedOperationException("API 29+ required")
-        val bitmap = thumbPermits.withPermit { loadCancellable() }
+        val bitmap = thumbPermits.withPermit { loadCancellable().toHardwareOrSelf() }
         return DrawableResult(
             drawable = BitmapDrawable(options.context.resources, bitmap),
             isSampled = true,

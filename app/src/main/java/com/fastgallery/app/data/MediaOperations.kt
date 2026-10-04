@@ -109,6 +109,8 @@ object MediaOperations {
         destRelativePath: String? = null,
         onProgress: ((Float) -> Unit)? = null,
         isCancelled: (() -> Boolean)? = null,
+        // true (Move): original naam rakho, "(copy)" suffix nahi. Original copy ke baad hat jaata hai, to naam free hota hai.
+        keepName: Boolean = false,
     ): Uri? {
         val folder = album.trim().replace(Regex("[/\\\\]+"), "_").ifBlank { "FastGallery" }
         // Existing album chuna ho to uska asli folder (jaise DCIM/Camera); warna naam se Pictures|Movies/<naam>.
@@ -124,10 +126,11 @@ object MediaOperations {
             val directory = if (existingPath != null) File(Environment.getExternalStorageDirectory(), existingPath) else File(parent, folder)
             if (!directory.exists() && !directory.mkdirs()) error("Could not create destination folder")
             val suffix = if (extension.isBlank()) "" else ".$extension"
-            var destinationFile = File(directory, "$baseName (copy)$suffix")
+            var destinationFile = File(directory, if (keepName) "$baseName$suffix" else "$baseName (copy)$suffix")
             var copyNumber = 2
             while (destinationFile.exists()) {
-                destinationFile = File(directory, "$baseName (copy $copyNumber)$suffix")
+                val numbered = if (keepName) "$baseName ($copyNumber)" else "$baseName (copy $copyNumber)"
+                destinationFile = File(directory, "$numbered$suffix")
                 copyNumber++
             }
             val source = context.contentResolver.openInputStream(item.uri) ?: error("Could not open source media")
@@ -145,7 +148,10 @@ object MediaOperations {
             return Uri.fromFile(destinationFile)
         }
         val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, "$baseName (copy)${if (extension.isBlank()) "" else ".$extension"}")
+            put(
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                (if (keepName) baseName else "$baseName (copy)") + (if (extension.isBlank()) "" else ".$extension"),
+            )
             put(MediaStore.MediaColumns.MIME_TYPE, item.mime)
             if (Build.VERSION.SDK_INT >= 29) {
                 put(MediaStore.MediaColumns.RELATIVE_PATH, existingPath ?: if (item.isVideo) "Movies/$folder/" else "Pictures/$folder/")

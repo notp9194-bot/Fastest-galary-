@@ -21,8 +21,21 @@ internal const val FAST_SCROLL_EXIT_SCREENS_PER_SEC = 1.2f
 /** Speed kitne ms ke gap par naapi jati hai. Bahar aane par thumbnails isi ke aas-paas load shuru karte hain. */
 internal const val FAST_SCROLL_SAMPLE_MS = 80L
 
-/** Placeholder se thumbnail aate waqt halka fade-in (ms). Memory-cache hit par Coil apne aap fade skip karta hai. */
+/** Fade-in ka option (ms) `thumbImageRequest(fadeIn = true)` ke liye; grid ke cells ab fade nahi karte (tiny -> poora seedha). */
 internal const val THUMB_FADE_IN_MS = 120
+
+/**
+ * Progressive load: fast scroll ke baad grey cell pehle itne chhote (px) thumbnail se bharta hai (kuch ms, kam memory),
+ * phir poora thumbnail aata hai. Blurry preview turant dikhta hai, khaali grey nahi.
+ */
+internal const val TINY_THUMB_PX = 40
+
+/** Scroll dheema hone par poore thumbnails ek saath nahi: cells itne slots me bante hain, har slot STEP ms baad. */
+internal const val THUMB_STAGGER_SLOTS = 12
+internal const val THUMB_STAGGER_STEP_MS = 14L
+
+/** Is cell ke poore thumbnail ka delay (ms): index se 0..(SLOTS-1)*STEP ke beech, taaki decode ka burst fail jaye. */
+internal fun thumbStaggerDelayMs(index: Int): Long = index.mod(THUMB_STAGGER_SLOTS) * THUMB_STAGGER_STEP_MS
 
 /** Hysteresis: abhi fast hai to jab tak speed EXIT se upar hai fast; nahi hai to ENTER ya usse upar jate hi fast. */
 internal fun nextFastScrollState(fast: Boolean, screensPerSec: Float): Boolean =

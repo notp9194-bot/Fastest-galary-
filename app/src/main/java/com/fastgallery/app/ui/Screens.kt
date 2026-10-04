@@ -192,7 +192,14 @@ private const val MIN_COLUMNS = 2
 private const val MAX_COLUMNS = 8
 
 /** Slow scroll me scroll ki disha me itni rows ke thumbnails pehle se memory-cache me (0 = prefetch band). */
-private const val PREFETCH_ROWS = 2
+internal const val PREFETCH_ROWS = 3
+
+/** Prefetch ke cells ki upar seema: tablet / zyada columns (16 tak) par rows * columns se memory-cache na bhar jaye. */
+internal const val PREFETCH_MAX_CELLS = 36
+
+/** Kitne cells aage prefetch karne hain: PREFETCH_ROWS rows, par PREFETCH_MAX_CELLS se zyada nahi (kam se kam 1 row). */
+internal fun prefetchCellCount(columns: Int): Int =
+    (PREFETCH_ROWS * columns).coerceAtMost(PREFETCH_MAX_CELLS).coerceAtLeast(columns)
 
 /**
  * Grid cells par `Modifier.animateItem()` (trash/favorite/filter par smooth khisakna). A/B ke liye switch: false karke
@@ -373,7 +380,7 @@ fun MediaGrid(
             try {
                 var queued = 0
                 var i = from
-                val limit = PREFETCH_ROWS * gridColumns
+                val limit = prefetchCellCount(gridColumns)
                 while (queued < limit && i in list.indices) {
                     (list[i] as? GridEntry.Media)?.let { m ->
                         queued++

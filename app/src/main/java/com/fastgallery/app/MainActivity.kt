@@ -115,6 +115,8 @@ import com.fastgallery.app.data.GridModel
 import com.fastgallery.app.data.MediaFilter
 import com.fastgallery.app.data.MediaItem
 import com.fastgallery.app.data.MediaOperations
+import com.fastgallery.app.data.TransferJob
+import com.fastgallery.app.data.TransferRules
 import com.fastgallery.app.data.buildAlbums
 import com.fastgallery.app.data.itemsToTransfer
 import com.fastgallery.app.data.sortAlbums
@@ -415,11 +417,29 @@ private fun GalleryContent(
         approvalDenied = onDenied
         approvalLauncher.launch(IntentSenderRequest.Builder(sender).build())
     }
+    fun showUndoSnackbar(message: String, onUndo: () -> Unit) {
+        val undoLabel = ctx.getString(R.string.action_undo)
+        // Lagataar actions par snackbar queue na bane: purana hatao, naya dikhao.
+        snackbarHostState.currentSnackbarData?.dismiss()
+        scope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = message,
+                actionLabel = undoLabel,
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) onUndo()
+        }
+    }
     /**
      * movedTo != null => ye delete "Move" ka doosra half hai (copy ho chuki): messages Move ke hisaab se aate hain
      * ("Moved to X"), aur approval deny hone par saaf bataya jaata hai ki sirf copy bani, original rakha gaya.
      */
-    fun deleteMedia(items: List<MediaItem>, movedTo: String? = null) {
+    fun deleteMedia(
+        items: List<MediaItem>,
+        movedTo: String? = null,
+        onMoveUndo: (() -> Unit)? = null,
+        doneMessage: String? = null,
+    ) {
         if (items.isEmpty()) return
         val action: () -> Unit = action@{
             if (bulk != null) return@action
@@ -454,11 +474,15 @@ private fun GalleryContent(
                         notify(ctx.getString(R.string.msg_move_delete_failed, movedTo, friendlyError(ctx, failure)), long = true)
                     movedTo != null && done < total ->
                         notify(ctx.getString(R.string.msg_move_partial, done, total, movedTo), long = true)
-                    movedTo != null && total == 1 -> notify(ctx.getString(R.string.msg_moved, movedTo))
-                    movedTo != null -> notify(ctx.getString(R.string.msg_moved_n, total, movedTo))
+                    movedTo != null -> {
+                        val msg = if (total == 1) ctx.getString(R.string.msg_moved, movedTo)
+                        else ctx.getString(R.string.msg_moved_n, total, movedTo)
+                        // Move ke baad Undo: copies ko unke original album me wapas bhejta hai.
+                        if (onMoveUndo != null) showUndoSnackbar(msg, onMoveUndo) else notify(msg)
+                    }
                     failure != null -> notify(ctx.getString(R.string.msg_delete_failed, friendlyError(ctx, failure)), long = true)
                     done < total -> notify(ctx.getString(R.string.msg_delete_partial, done, total))
-                    else -> notify(ctx.getString(R.string.msg_deleted))
+                    else -> notify(doneMessage ?: ctx.getString(R.string.msg_deleted))
                 }
             }
             Unit
@@ -499,10 +523,18 @@ private fun GalleryContent(
      */
     fun copyOrMoveMedia(items: List<MediaItem>, folder: String, move: Boolean, destPath: String?) {
         val todo = itemsToTransfer(items, move, destPath)
-        if (todo.isEmpty() || bulk != null) return
+        runTransfer(todo.map { TransferJob(it, folder, destPath) }, move, folder, undoable = true)
+    }
+    /**
+     * Asli copy/move loop. Har job ka apna destination (folder, destPath): Undo me har item apne original album me
+     * wapas jaata hai. undoable = true par result snackbar me Undo aata hai (API 29+): Copy ka Undo copies delete karta
+     * hai, Move ka Undo copies ko unke original album me wapas move karta hai (naam wahi rehta hai).
+     */
+    fun runTransfer(jobs: List<TransferJob>, move: Boolean, doneLabel: String, undoable: Boolean) {
+        if (jobs.isEmpty() || bulk != null) return
         bulkCancel.set(false)
         selected = emptySet()
-        val total = todo.size
+        val total = jobs.size
         val single = total == 1
         val singleLabel = ctx.getString(if (move) R.string.bulk_moving else R.string.bulk_copying)
         fun labelAt(n: Int) =
@@ -510,14 +542,15 @@ private fun GalleryContent(
         bulk = BulkProgress(labelAt(1), if (single) null else 0f)
         scope.launch(Dispatchers.IO) {
             val copied = ArrayList<MediaItem>(total)
+            val made = ArrayList<Pair<MediaItem, MediaItem>>(total) // (source, destination me bani copy)
             var failure: Throwable? = null
             var cancelled = false
-            for ((index, item) in todo.withIndex()) {
+            for ((index, job) in jobs.withIndex()) {
                 if (bulkCancel.get()) { cancelled = true; break }
                 if (!single) bulk = BulkProgress(labelAt(index + 1), index / total.toFloat())
                 val result = runCatching {
                     MediaOperations.copyToAlbum(
-                        ctx, item, folder, destPath,
+                        ctx, job.item, job.folder, job.destPath,
                         onProgress = { f ->
                             bulk = BulkProgress(
                                 labelAt(index + 1),
@@ -525,20 +558,32 @@ private fun GalleryContent(
                             )
                         },
                         isCancelled = { bulkCancel.get() },
+                        keepName = move, // Move = original naam; "(copy)" suffix sirf Copy me
                     )
                 }
                 val error = result.exceptionOrNull()
+                val newUri = result.getOrNull()
                 when {
                     error is MediaOperations.CopyCancelledException -> { cancelled = true; break }
                     error != null -> { failure = error; break }
-                    result.getOrNull() == null -> { failure = IllegalStateException("Could not create destination media"); break }
-                    else -> copied += item
+                    newUri == null -> { failure = IllegalStateException("Could not create destination media"); break }
+                    else -> {
+                        copied += job.item
+                        made += job.item to job.item.copy(uri = requireNotNull(newUri))
+                    }
                 }
             }
             withContext(Dispatchers.Main) {
                 bulk = null
                 if (copied.isNotEmpty()) vm.load()
                 val completed = failure == null && !cancelled
+                val canUndo = TransferRules.canUndo(Build.VERSION.SDK_INT, move, completed, undoable, made.map { it.first })
+                val moveUndo: (() -> Unit)? = if (canUndo && move) {
+                    {
+                        val label = TransferRules.undoLabel(made.map { it.first }, ctx.getString(R.string.label_original_albums))
+                        runTransfer(TransferRules.undoJobs(made), move = true, doneLabel = label, undoable = false)
+                    }
+                } else null
                 when {
                     // Move adhoora reh gaya: originals koi nahi hata, isliye "Copied X of Y" hi sach hai.
                     !completed && copied.isNotEmpty() ->
@@ -548,10 +593,17 @@ private fun GalleryContent(
                     cancelled -> notify(ctx.getString(if (move) R.string.msg_move_cancelled else R.string.msg_copy_cancelled))
                     // Move me yahan "Copied" nahi dikhate: result "Moved to X" delete ke baad deleteMedia dikhata hai.
                     move -> Unit
-                    single -> notify(ctx.getString(R.string.msg_copied, folder))
-                    else -> notify(ctx.getString(R.string.msg_copied_n, copied.size, folder))
+                    else -> {
+                        val msg = if (single) ctx.getString(R.string.msg_copied, doneLabel)
+                        else ctx.getString(R.string.msg_copied_n, copied.size, doneLabel)
+                        if (canUndo) {
+                            showUndoSnackbar(msg) {
+                                deleteMedia(made.map { it.second }, doneMessage = ctx.getString(R.string.msg_copy_undone))
+                            }
+                        } else notify(msg)
+                    }
                 }
-                if (move && completed && copied.isNotEmpty()) deleteMedia(copied, movedTo = folder)
+                if (move && completed && copied.isNotEmpty()) deleteMedia(copied, movedTo = doneLabel, onMoveUndo = moveUndo)
             }
         }
     }
@@ -579,19 +631,6 @@ private fun GalleryContent(
                 notify(message)
             }
         }.onFailure { notify(ctx.getString(R.string.msg_trash_request_failed), long = true) }
-    }
-    fun showUndoSnackbar(message: String, onUndo: () -> Unit) {
-        val undoLabel = ctx.getString(R.string.action_undo)
-        // Lagataar actions par snackbar queue na bane: purana hatao, naya dikhao.
-        snackbarHostState.currentSnackbarData?.dismiss()
-        scope.launch {
-            val result = snackbarHostState.showSnackbar(
-                message = message,
-                actionLabel = undoLabel,
-                duration = SnackbarDuration.Long,
-            )
-            if (result == SnackbarResult.ActionPerformed) onUndo()
-        }
     }
     fun showTrashedSnackbar(items: List<MediaItem>) =
         showUndoSnackbar(ctx.getString(R.string.msg_trashed)) { undoTrash(items) }

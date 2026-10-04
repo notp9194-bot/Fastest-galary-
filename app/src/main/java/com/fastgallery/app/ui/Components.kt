@@ -45,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.Snapshot
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -253,7 +254,7 @@ fun Thumb(
     modifier: Modifier = Modifier,
     /**
      * true = fast scroll chal raha hai: jis cell ka thumbnail memory-cache me nahi, wo grey placeholder rehta hai
-     * (decode shuru nahi hota). Scroll dheema/ruka hote hi load hota hai (halka fade-in). Jo cell ek baar load ho chuka
+     * (decode shuru nahi hota). Scroll dheema/ruka hote hi pehle tiny preview, phir poora (bina fade). Jo cell ek baar load ho chuka
      * wo kabhi wapas grey nahi hota.
      *
      * Lambda isliye (Boolean nahi): grid ka "fast scroll" State composition me padha jaye to uske har badlav
@@ -268,11 +269,18 @@ fun Thumb(
         !Snapshot.withoutReadObservation { deferLoad() } || isThumbCached(ctx, item.uri, sizePx)
     }
     var loadNow by remember(item.uri, sizePx) { mutableStateOf(startedLoaded) }
+    // Progressive: grey cell pehle tiny (blurry) thumbnail dikhata hai, phir poora. tinyNow = tiny layer chalu;
+    // fullDone = poora aa gaya, tiny layer hata do (overdraw / memory bachane ke liye).
+    var tinyNow by remember(item.uri, sizePx) { mutableStateOf(false) }
+    var fullDone by remember(item.uri, sizePx) { mutableStateOf(startedLoaded) }
     val currentDeferLoad by rememberUpdatedState(deferLoad)
     if (!loadNow) {
-        // Sirf grey (abhi load na hua) cell: fast scroll khatam hone ka intezaar, phir load. Ek baar load => wapas grey nahi.
+        // Sirf grey (abhi load na hua) cell: fast scroll khatam hone ka intezaar. Phir pehle tiny preview (turant),
+        // phir poora thumbnail thoda staggered (sab cells ek saath nahi). Ek baar load => wapas grey nahi.
         LaunchedEffect(item.uri, sizePx) {
             snapshotFlow { currentDeferLoad() }.first { !it }
+            tinyNow = true
+            delay(thumbStaggerDelayMs(index))
             loadNow = true
         }
     }
@@ -321,12 +329,22 @@ fun Thumb(
                 onLongClick(label = res.getString(R.string.thumb_select_action)) { onSelectAction(item); true }
             }
     ) {
+        if (tinyNow && !fullDone) {
+            AsyncImage(
+                model = rememberThumbRequest(item.uri, TINY_THUMB_PX),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         if (loadNow) {
             AsyncImage(
-                model = rememberThumbRequest(item.uri, sizePx, fadeIn = !startedLoaded),
+                // Crossfade band: tiny -> poora seedha badalta hai (animation ka kharcha nahi); size request me fixed hai, layout ka intezaar nahi.
+                model = rememberThumbRequest(item.uri, sizePx),
                 contentDescription = null, // label parent ke merged semantics me hai (lazy)
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
+                onSuccess = { fullDone = true },
             )
         }
         if (item.isVideo) {
