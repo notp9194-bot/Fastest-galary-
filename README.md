@@ -51,6 +51,11 @@ Release build apni keystore se sign hota hai. Keystore na mile to local testing 
 - `play-store/permissions-declaration.md`: photo/video permissions declaration ke draft jawab. `data-safety.md`: Data safety form. `listing.md`: store listing text. `RELEASE_CHECKLIST.md`: poori checklist.
 - `scripts/make-keystore.sh`: release keystore + `keystore.properties` banata hai (khud chalao, keystore kisi ko mat bhejo).
 
+## Updates in 1.4.57
+
+- **CI build fix:** 1.4.52 se `compileDebugKotlin` fail ho raha tha ("Unresolved reference 'runTransfer'", `MainActivity.kt:526`): `copyOrMoveMedia` `runTransfer` se pehle likha tha, aur composable ke andar local functions use se pehle declare honi chahiye. Ab `runTransfer` pehle, `copyOrMoveMedia` uske baad. (1.4.52 - 1.4.56 ke sab changes isi build me hain, jo ab tak compile hi nahi ho paaye the.)
+- Version: `versionName` 1.4.57 / `versionCode` 63.
+
 ## Updates in 1.4.56
 
 - **Grid crossfade band.** `Thumb` ab fade-in nahi karta: pehle grey se aate cells 120ms fade karte the (har cell par animation + redraw). Ab tiny preview -> poora thumbnail seedha badalta hai (dono ek hi jaise, to jhatka nahi dikhta). `thumbImageRequest(fadeIn = true)` ka option bacha hai (grid use nahi karta).

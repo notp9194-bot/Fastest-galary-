@@ -517,15 +517,6 @@ private fun GalleryContent(
         } else action()
     }
     /**
-     * Copy / move (ek ya kai items). Ek item par pehle jaisa byte-progress; kai items par "x of y" + overall bar.
-     * Move = poori copy safal hone ke BAAD hi un items ke originals delete (Android approval ke saath).
-     * Pehli failure / Cancel par ruk jaata hai: jo copy ho chuke wo rehte hain, originals koi delete nahi hota.
-     */
-    fun copyOrMoveMedia(items: List<MediaItem>, folder: String, move: Boolean, destPath: String?) {
-        val todo = itemsToTransfer(items, move, destPath)
-        runTransfer(todo.map { TransferJob(it, folder, destPath) }, move, folder, undoable = true)
-    }
-    /**
      * Asli copy/move loop. Har job ka apna destination (folder, destPath): Undo me har item apne original album me
      * wapas jaata hai. undoable = true par result snackbar me Undo aata hai (API 29+): Copy ka Undo copies delete karta
      * hai, Move ka Undo copies ko unke original album me wapas move karta hai (naam wahi rehta hai).
@@ -606,6 +597,15 @@ private fun GalleryContent(
                 if (move && completed && copied.isNotEmpty()) deleteMedia(copied, movedTo = doneLabel, onMoveUndo = moveUndo)
             }
         }
+    }
+    /**
+     * Copy / move (ek ya kai items). Ek item par pehle jaisa byte-progress; kai items par "x of y" + overall bar.
+     * Move = poori copy safal hone ke BAAD hi un items ke originals delete (Android approval ke saath).
+     * Pehli failure / Cancel par ruk jaata hai: jo copy ho chuke wo rehte hain, originals koi delete nahi hota.
+     */
+    fun copyOrMoveMedia(items: List<MediaItem>, folder: String, move: Boolean, destPath: String?) {
+        val todo = itemsToTransfer(items, move, destPath)
+        runTransfer(todo.map { TransferJob(it, folder, destPath) }, move, folder, undoable = true)
     }
     /**
      * Trash / restore.
